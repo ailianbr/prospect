@@ -35,6 +35,8 @@ class WideEventMiddleware(BaseHTTPMiddleware):
             'user_agent': request.headers.get('user-agent'),
             **ENV_CONTEXT,
         }
+        if instance_id := request.headers.get('x-instance-id'):
+            wide_event['client_id'] = instance_id
         set_wide_event(wide_event)
 
         try:
