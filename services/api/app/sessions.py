@@ -1,6 +1,9 @@
 # app/sessions.py
+import base64
+import json
 import logging
 import secrets
+import time
 from dataclasses import dataclass
 
 import requests
@@ -20,6 +23,36 @@ settings = Settings()
 pb_client = PocketBase(settings.POCKETBASE_API_URL)
 
 security = HTTPBasic()
+
+_EXPIRY_THRESHOLD = 300  # re-auth if token expires within 5 minutes
+
+
+def _token_exp(token: str) -> float:
+    """Decode JWT exp claim without verifying signature."""
+    try:
+        payload_b64 = token.split('.')[1]
+        payload_b64 += '=' * (-len(payload_b64) % 4)
+        payload = json.loads(base64.b64decode(payload_b64))
+        return float(payload.get('exp', 0))
+    except Exception:
+        return 0.0
+
+
+def _ensure_pb_auth() -> None:
+    token = pb_client.auth_store.token
+    if not token or time.time() >= (_token_exp(token) - _EXPIRY_THRESHOLD):
+        try:
+            pb_client.collection('_superusers').auth_with_password(
+                settings.POCKETBASE_BOT_EMAIL, settings.POCKETBASE_BOT_PASSWORD
+            )
+            logger.info('pocketbase.auth_refreshed')
+        except Exception as e:
+            logger.error('pocketbase.auth_failed', extra={'error': str(e)})
+            raise HTTPException(status_code=503, detail=f'PocketBase auth failed: {e}')
+
+
+# authenticate on startup
+_ensure_pb_auth()
 
 
 @dataclass
@@ -45,31 +78,13 @@ def get_monk_session(
 
 
 class PocketBaseSession:
-    def __init__(self, admin: bool = True):
-        self.admin = admin
+    def __init__(self):
+        _ensure_pb_auth()
         self.client = pb_client
 
-        # authenticate
-        try:
-            if admin:
-                self.auth_data = self.client.admins.auth_with_password(
-                    settings.POCKETBASE_BOT_EMAIL, settings.POCKETBASE_BOT_PASSWORD
-                )
-            else:
-                self.auth_data = self.client.collection('users').auth_with_password(
-                    settings.POCKETBASE_BOT_EMAIL, settings.POCKETBASE_BOT_PASSWORD
-                )
-        except Exception as e:
-            logger.error('pocketbase.auth_failed', extra={'error': str(e)})
-            raise HTTPException(status_code=503, detail=f'PocketBase auth failed: {e}')
 
-        if not self.auth_data.is_valid:
-            logger.error('pocketbase.token_invalid', extra={'admin': admin})
-            raise HTTPException(status_code=401, detail='PocketBase token invalid')
-
-
-def get_pocketbase_session(admin: bool = True) -> PocketBaseSession:
-    return PocketBaseSession(admin=admin)
+def get_pocketbase_session() -> PocketBaseSession:
+    return PocketBaseSession()
 
 
 class Monk:

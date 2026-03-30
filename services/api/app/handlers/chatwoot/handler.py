@@ -28,23 +28,44 @@ def fetch_chatwoot_config(pb, instance_id: str, handler: str, channel: str) -> d
     api_token_handler, api_token_templates. Returns None if any required
     collection lookup fails.
     """
+    ctx = {'instance_id': instance_id, 'handler': handler, 'channel': channel}
     try:
         channel_record = pb.client.collection('monk_channel_configs').get_first_list_item(
             f'instance_id="{instance_id}" && handler="{handler}" && channel="{channel}"'
         )
-        extra = channel_record.extra_config
+    except ClientResponseError as e:
+        logger.warning('chatwoot.config_missing', extra={**ctx, 'collection': 'monk_channel_configs', 'status': e.status})
+        return None
+    extra = channel_record.extra_config
 
+    try:
         instance_svc = pb.client.collection('instance_services').get_first_list_item(
             f'instance="{instance_id}" && service.key="{handler}"'
         )
+    except ClientResponseError as e:
+        logger.warning('chatwoot.config_missing', extra={**ctx, 'collection': 'instance_services', 'status': e.status})
+        return None
 
+    try:
         secret_record = pb.client.collection('service_secrets').get_first_list_item(f'instance_service="{instance_svc.id}"')
-        secret = secret_record.secret_config
+    except ClientResponseError as e:
+        logger.warning(
+            'chatwoot.config_missing',
+            extra={**ctx, 'collection': 'service_secrets', 'svc_id': instance_svc.id, 'pb_status': e.status},
+        )
+        return None
+    secret = secret_record.secret_config
 
+    try:
         svc_config = pb.client.collection('common_service_config').get_first_list_item(f'service.key="{handler}"')
+    except ClientResponseError as e:
+        logger.warning('chatwoot.config_missing', extra={**ctx, 'collection': 'common_service_config', 'status': e.status})
+        return None
 
+    try:
         instance_config = pb.client.collection('conectai_instance_config').get_first_list_item(f'instance="{instance_id}"')
-    except ClientResponseError:
+    except ClientResponseError as e:
+        logger.warning('chatwoot.config_missing', extra={**ctx, 'collection': 'conectai_instance_config', 'status': e.status})
         return None
 
     return {
