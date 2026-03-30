@@ -1,0 +1,111 @@
+# Production stack. Each service gets unique container names, volume names, and
+# network aliases (prd_ prefix) so they never collide with the stage stack on
+# shared external networks (observability, dokploy-network).
+#
+# The bridge network is given an explicit name (listmonk_prd_bridge) to prevent
+# Docker from assigning the same default name as stage's bridge, which caused
+# DNS round-robin between prod and stage containers and intermittent
+# "password authentication failed" errors from listmonk_db.
+#
+# PocketBase is not deployed here — prod uses an external PocketBase instance.
+
+x-listmonk_db-credentials: &listmonk_db-credentials
+  POSTGRES_USER: ${POSTGRES_USER}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  POSTGRES_DB: ${POSTGRES_DB}
+
+services:
+
+  api:
+    image: ghcr.io/kerryhen/monk-api:latest
+    container_name: prd_listmonk_api
+    pull_policy: always
+    environment:
+      - LISTMONK_USER=${LISTMONK_USER}
+      - LISTMONK_TOKEN=${LISTMONK_TOKEN}
+      - LISTMONK_API_URL=${LISTMONK_API_URL}
+      - POCKETBASE_BOT_EMAIL=${POCKETBASE_BOT_EMAIL}
+      - POCKETBASE_BOT_PASSWORD=${POCKETBASE_BOT_PASSWORD}
+      - POCKETBASE_API_URL=${POCKETBASE_API_URL}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT}
+    expose:
+      - 8000
+    depends_on:
+      - listmonk_app
+    networks:
+      bridge: null
+      observability:
+        aliases:
+          - prd_listmonk_api
+      dokploy-network:
+        aliases:
+          - prd_listmonk_api
+
+  listmonk_app:
+    image: listmonk/listmonk:v6.0.0
+    container_name: prd_listmonk_app
+    restart: unless-stopped
+    expose:
+      - 9000
+    networks:
+      bridge: null
+      observability:
+        aliases:
+          - prd_listmonk_app
+      dokploy-network:
+        aliases:
+          - prd_listmonk_app
+    hostname: listmonk.ailian.com.br
+    depends_on:
+      - listmonk_db
+    command: [sh, -c, "./listmonk --install --idempotent --yes --config '' && ./listmonk --upgrade --yes --config '' && ./listmonk --config ''"]
+    environment:
+      LISTMONK_app__address: ${LISTMONK_APP_ADDRESS}
+      LISTMONK_db__user: ${LISTMONK_DB_USER}
+      LISTMONK_db__password: ${LISTMONK_DB_PASSWORD}
+      LISTMONK_db__database: ${LISTMONK_DB_DATABSE}
+      LISTMONK_db__host: ${LISTMONK_DB_HOST}
+      LISTMONK_db__port: ${LISTMONK_DB_PORT}
+      LISTMONK_db__ssl_mode: ${LISTMONK_DB_SSL_MODE}
+      LISTMONK_db__max_open: ${LISTMONK_DB_MAX_OPEN}
+      LISTMONK_db__max_idle: ${LISTMONK_DB_MAX_IDLE}
+      LISTMONK_db__max_lifetime: ${LISTMONK_DB_MAX_LIFETIME}
+      TZ: Etc/UTC
+      LISTMONK_ADMIN_USER: ${LISTMONK_ADMIN_USER:-}
+      LISTMONK_ADMIN_PASSWORD: ${LISTMONK_ADMIN_PASSWORD:-}
+    volumes:
+      - ./uploads:/listmonk/uploads:rw
+
+  listmonk_db:
+    image: postgres:17-alpine
+    container_name: prd_listmonk_db
+    restart: unless-stopped
+    expose:
+      - 5432
+    networks:
+      bridge: null
+      dokploy-network:
+        aliases:
+          - prd_listmonk_db
+    environment:
+      <<: *listmonk_db-credentials
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U listmonk"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    volumes:
+      - type: volume
+        source: prd_listmonk-data
+        target: /var/lib/postgresql/data
+
+networks:
+  bridge:
+    name: listmonk_prd_bridge
+  observability:
+    external: true
+  dokploy-network:
+    external: true
+
+volumes:
+  prd_listmonk-data:
