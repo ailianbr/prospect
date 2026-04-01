@@ -391,6 +391,81 @@ class ImportSubscriberItem(BaseModel):
 
 
 # =============================================================================
+# SUBSCRIBER CRUD SCHEMAS
+# =============================================================================
+
+
+class LM_SubscriberListMembership(BaseModel):
+    """Compact list reference embedded inside a Listmonk subscriber object."""
+
+    id: int
+    name: str
+    type: str
+    optin: str
+    tags: Optional[List[str]] = None
+    description: Optional[str] = None
+    subscription_status: Optional[str] = None
+    subscription_created_at: Optional[datetime] = None
+    subscription_updated_at: Optional[datetime] = None
+
+
+class LM_SubscriberSchema(BaseModel):
+    """Listmonk subscriber object returned by GET/POST/PUT /subscribers."""
+
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    uuid: str
+    email: str
+    name: str
+    status: str
+    attribs: Dict[str, Any] = {}
+    lists: List[LM_SubscriberListMembership] = []
+
+
+class LM_CreateSubscriberSchema(BaseModel):
+    """Request body for creating a single subscriber."""
+
+    email: EmailStr
+    name: str
+    status: Literal['enabled', 'disabled', 'blocklisted'] = 'enabled'
+    lists: List[int] = []
+    attribs: Dict[str, Any] = {}
+    preconfirm_subscriptions: bool = True
+
+
+class LM_UpdateSubscriberSchema(BaseModel):
+    """Partial update for a subscriber — omitted fields are preserved."""
+
+    email: Optional[EmailStr] = None
+    name: Optional[str] = None
+    status: Optional[Literal['enabled', 'disabled', 'blocklisted']] = None
+    attribs: Optional[Dict[str, Any]] = None
+    lists: Optional[List[int]] = None
+
+
+class LM_ResponseSubscribersDataSchema(BaseModel):
+    """Inner paginated result for GET /subscribers."""
+
+    results: Optional[List[LM_SubscriberSchema]] = None  # Listmonk returns null when empty
+    total: int
+    per_page: int
+    page: int
+
+
+class ResponseSubscriberSchema(BaseModel):
+    """Single-subscriber response envelope."""
+
+    data: LM_SubscriberSchema
+
+
+class ResponseSubscribersSchema(BaseModel):
+    """Paginated subscriber list response envelope."""
+
+    data: LM_ResponseSubscribersDataSchema
+
+
+# =============================================================================
 # MESSENGER SCHEMAS
 # Shape of the payload Listmonk sends to a custom messenger endpoint.
 # =============================================================================
