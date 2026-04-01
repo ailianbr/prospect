@@ -4,7 +4,14 @@ from http import HTTPStatus
 import pytest
 
 from app.interface import interface
-from app.schemas import ClientSchema, CreateListSchema, DeleteListSchema, LM_CreateListSchema, LM_CreateSubscriberSchema, LM_UpdateSubscriberSchema
+from app.schemas import (
+    ClientSchema,
+    CreateListSchema,
+    DeleteListSchema,
+    LM_CreateListSchema,
+    LM_CreateSubscriberSchema,
+    LM_UpdateSubscriberSchema,
+)
 
 TEST_EMAIL = 'testimport@example.com'
 
@@ -131,8 +138,7 @@ def created_subscriber(created_list):
         ClientSchema(id='mxf'),
         LM_CreateSubscriberSchema(email=TEST_EMAIL, name='Test User'),
     )
-    yield sub.data
-    # autouse cleanup_test_subscriber deletes by email after each test
+    return sub.data
 
 
 def test_list_subscribers_default_list(client, created_subscriber):
