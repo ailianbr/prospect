@@ -465,7 +465,7 @@ class Interface:
         """
         response = self.__monk_subscribers_single.get({}, path=f'/{subscriber_id}')
         # Listmonk returns 400 ("Subscriber not found") for deleted/missing subscribers
-        if response.status_code in (HTTPStatus.NOT_FOUND, HTTPStatus.BAD_REQUEST):
+        if response.status_code in {HTTPStatus.NOT_FOUND, HTTPStatus.BAD_REQUEST}:
             raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail=f'Subscriber {subscriber_id} not found')
         self._raise_for_listmonk(response)
         subscriber = response.json()['data']
