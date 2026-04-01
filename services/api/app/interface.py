@@ -22,7 +22,13 @@ from app.schemas import (
     ImportSubscriberItem,
     ListSchema,
     LM_CreateListSchema,
+    LM_CreateSubscriberSchema,
+    LM_ResponseSubscribersDataSchema,
+    LM_SubscriberSchema,
+    LM_UpdateSubscriberSchema,
     ResponseCampaignSchema,
+    ResponseSubscriberSchema,
+    ResponseSubscribersSchema,
     ResponseUpdateListSchema,
     UpdateCampaignSchema,
     UpdateListSchema,
@@ -107,6 +113,14 @@ class Interface:
         if result.total_items == 0:
             return []
         return [str(lid) for lid in result.items[0].lists]
+
+    def _get_default_list_id(self, client_id: str) -> Optional[int]:
+        """Returns the client's default Listmonk list ID without auto-creating anything."""
+        result = self.__pb.client.collection('monk_client_lists').get_list(1, 1, {'filter': f'client="{client_id}"'})
+        if result.total_items == 0:
+            return None
+        dl = result.items[0].default_list
+        return int(dl) if dl else None
 
     def _get_campaign_raw(self, campaign_id: int) -> dict:
         response = self.__monk_campaigns.get({}, path=f'/{campaign_id}')
@@ -443,6 +457,153 @@ class Interface:
             'count': len(items),
         })
         return result
+
+    def _verify_subscriber_ownership(self, subscriber_id: int, client_id: str) -> dict:
+        """Fetch a subscriber from Listmonk and verify it belongs to at least one of the client's lists.
+
+        Returns the raw subscriber dict on success. Raises 404 if not found, 403 if not owned.
+        """
+        response = self.__monk_subscribers_single.get({}, path=f'/{subscriber_id}')
+        # Listmonk returns 400 ("Subscriber not found") for deleted/missing subscribers
+        if response.status_code in (HTTPStatus.NOT_FOUND, HTTPStatus.BAD_REQUEST):
+            raise HTTPException(status_code=HTTPStatus.NOT_FOUND, detail=f'Subscriber {subscriber_id} not found')
+        self._raise_for_listmonk(response)
+        subscriber = response.json()['data']
+        client_list_ids = self._get_client_list_ids(client_id)
+        subscriber_list_ids = [str(lst['id']) for lst in subscriber.get('lists', [])]
+        if not any(lid in client_list_ids for lid in subscriber_list_ids):
+            raise HTTPException(status_code=HTTPStatus.FORBIDDEN, detail='Subscriber does not belong to client')
+        return subscriber
+
+    def get_subscribers(
+        self,
+        client: ClientSchema,
+        list_id: Optional[int],
+        page: int,
+        per_page: int,
+        query: Optional[str],
+    ) -> ResponseSubscribersSchema:
+        client_list_ids = self._get_client_list_ids(client.id)
+        if not client_list_ids:
+            empty = LM_ResponseSubscribersDataSchema(results=[], total=0, per_page=per_page, page=page)
+            return ResponseSubscribersSchema(data=empty)
+
+        if list_id is not None:
+            if str(list_id) not in client_list_ids:
+                raise HTTPException(
+                    status_code=HTTPStatus.NOT_FOUND,
+                    detail=f'List {list_id} not found or does not belong to client "{client.id}"',
+                )
+            target_list_id = list_id
+        else:
+            target_list_id = int(self._resolve_target_list(client, None))
+
+        params: dict = {'page': page, 'per_page': per_page, 'list_id': target_list_id}
+        if query:
+            params['query'] = query
+
+        response = self.__monk_subscribers_single.get(params)
+        self._raise_for_listmonk(response)
+        raw = response.json()['data']
+        raw['results'] = raw.get('results') or []
+        enrich_wide_event({'operation': 'get_subscribers', 'client_id': client.id, 'list_id': target_list_id})
+        return ResponseSubscribersSchema(data=LM_ResponseSubscribersDataSchema(**raw))
+
+    def get_subscriber(self, subscriber_id: int, client: ClientSchema) -> ResponseSubscriberSchema:
+        subscriber = self._verify_subscriber_ownership(subscriber_id, client.id)
+        enrich_wide_event({'operation': 'get_subscriber', 'client_id': client.id, 'subscriber_id': subscriber_id})
+        return ResponseSubscriberSchema(data=LM_SubscriberSchema(**subscriber))
+
+    def create_subscriber(self, client: ClientSchema, subscriber_data: LM_CreateSubscriberSchema) -> ResponseSubscriberSchema:
+        client_list_ids = self._get_client_list_ids(client.id)
+        target_lists = list(subscriber_data.lists)
+
+        if not target_lists:
+            target_lists = [self._resolve_target_list(client, None)]
+        else:
+            for lid in target_lists:
+                if str(lid) not in client_list_ids:
+                    raise HTTPException(
+                        status_code=HTTPStatus.FORBIDDEN,
+                        detail=f'List {lid} does not belong to client "{client.id}"',
+                    )
+
+        body = subscriber_data.model_dump(mode='json')
+        body['lists'] = target_lists
+
+        response = self.__monk_subscribers_single.post(body)
+        self._raise_for_listmonk(response)
+        data = response.json()['data']
+        enrich_wide_event({'operation': 'create_subscriber', 'client_id': client.id, 'subscriber_id': data['id']})
+        return ResponseSubscriberSchema(data=LM_SubscriberSchema(**data))
+
+    def update_subscriber(
+        self, subscriber_id: int, client: ClientSchema, update_data: LM_UpdateSubscriberSchema
+    ) -> ResponseSubscriberSchema:
+        current = self._verify_subscriber_ownership(subscriber_id, client.id)
+        client_list_ids = self._get_client_list_ids(client.id)
+
+        if update_data.lists is not None:
+            for lid in update_data.lists:
+                if str(lid) not in client_list_ids:
+                    raise HTTPException(
+                        status_code=HTTPStatus.FORBIDDEN,
+                        detail=f'List {lid} does not belong to client "{client.id}"',
+                    )
+
+        merged = {
+            'email': current['email'],
+            'name': current['name'],
+            'status': current['status'],
+            'attribs': current.get('attribs', {}),
+            'lists': [lst['id'] for lst in current.get('lists', [])],
+            'preconfirm_subscriptions': True,
+        }
+        merged.update(update_data.model_dump(mode='json', exclude_none=True))
+
+        response = self.__monk_subscribers_single.put(merged, path=f'/{subscriber_id}')
+        self._raise_for_listmonk(response)
+        data = response.json()['data']
+        enrich_wide_event({'operation': 'update_subscriber', 'client_id': client.id, 'subscriber_id': subscriber_id})
+        return ResponseSubscriberSchema(data=LM_SubscriberSchema(**data))
+
+    def delete_subscriber(
+        self, subscriber_id: int, client: ClientSchema, list_id: Optional[int] = None
+    ) -> DeleteResponseSchema:
+        current = self._verify_subscriber_ownership(subscriber_id, client.id)
+        default_list_id = self._get_default_list_id(client.id)
+
+        if list_id is None or list_id == default_list_id:
+            response = self.__monk_subscribers_single.delete({}, path=f'/{subscriber_id}')
+            self._raise_for_listmonk(response)
+            enrich_wide_event({'operation': 'delete_subscriber', 'client_id': client.id, 'subscriber_id': subscriber_id})
+        else:
+            client_list_ids = self._get_client_list_ids(client.id)
+            if str(list_id) not in client_list_ids:
+                raise HTTPException(
+                    status_code=HTTPStatus.NOT_FOUND,
+                    detail=f'List {list_id} not found or does not belong to client "{client.id}"',
+                )
+            # Soft delete: remove the subscriber from this list only by updating their memberships
+            remaining_lists = [lst['id'] for lst in current.get('lists', []) if lst['id'] != list_id]
+            merged = {
+                'email': current['email'],
+                'name': current['name'],
+                'status': current['status'],
+                'attribs': current.get('attribs', {}),
+                'lists': remaining_lists,
+                'preconfirm_subscriptions': True,
+            }
+            response = self.__monk_subscribers_single.put(merged, path=f'/{subscriber_id}')
+            self._raise_for_listmonk(response)
+            enrich_wide_event({
+                'operation': 'unsubscribe_subscriber',
+                'client_id': client.id,
+                'subscriber_id': subscriber_id,
+                'list_id': list_id,
+            })
+
+        return DeleteResponseSchema(data=True)
 
     def delete_subscriber_by_email(self, email: str) -> None:
         response = self.__monk_subscribers_single.get({'query': f"subscribers.email='{email}'"})
