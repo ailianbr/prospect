@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, development]
 
 jobs:
   lint:
@@ -25,30 +25,18 @@ jobs:
         working-directory: services/api
         run: pdm run task lint
 
-  test:
-    needs: lint
+  compose-validate:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: services/api
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Doppler CLI
-        uses: dopplerhq/cli-action@v3
+      - name: Validate compose files
+        run: |
+          docker compose -f docker-compose.yml config -q
+          docker compose -f docker-compose.stg.yml config -q
+          docker compose -f docker-compose.prd.yml config -q
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.14'
-
-      - name: Install PDM
-        run: pip install pdm
-
-      - name: Install dependencies
-        run: pdm install --dev
-
-      - name: Run tests
-        run: doppler run -- pdm run task test
-        env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN_STG }}
+  test:
+    needs: lint
+    uses: ./.github/workflows/integration-test.yml
 

@@ -1,5 +1,5 @@
 # Stage stack. Each service gets unique container names, volume names, and
-# network aliases (dev_ prefix) so they never collide with the prod stack on
+# network aliases (stg_ prefix) so they never collide with the prod stack on
 # shared external networks (observability, dokploy-network).
 #
 # The bridge network is given an explicit name (listmonk_stage_bridge) to prevent
@@ -15,10 +15,11 @@ x-listmonk_db-credentials: &listmonk_db-credentials
 services:
 
   api:
-    image: ghcr.io/kerryhen/monk-api:dev
-    container_name: dev_listmonk_api
+    image: ghcr.io/ailianbr/monk-api:stg
+    container_name: stg_listmonk_api
     pull_policy: always
     environment:
+      - ENVIRONMENT=stg
       - LISTMONK_USER=${LISTMONK_USER}
       - LISTMONK_TOKEN=${LISTMONK_TOKEN}
       - LISTMONK_API_URL=${LISTMONK_API_URL}
@@ -35,14 +36,14 @@ services:
       bridge: null
       observability:
         aliases:
-          - dev_listmonk_api
+          - stg_listmonk_api
       dokploy-network:
         aliases:
-          - dev_listmonk_api
+          - stg_listmonk_api
 
   pocketbase:
-    image: ghcr.io/muchobien/pocketbase:latest
-    container_name: dev_listmonk_api_db
+    image: ghcr.io/muchobien/pocketbase:0.36.7  # pinned (matches dev; verified schema import)
+    container_name: stg_listmonk_api_db
     restart: unless-stopped
     command:
       - --encryptionEnv
@@ -50,13 +51,18 @@ services:
     environment:
       - ENCRYPTION=${PB_ENCRYPTION}
       - PB_INVITATION_PEPPER=${PB_INVITATION_PEPPER}
-      - N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL}
+      - N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL:-}
       - N8N_WEBHOOK_SECRET=${N8N_WEBHOOK_SECRET}
       - ENVIROMENT=${ENVIROMENT}
+      # Bootstrap the superuser the app authenticates as (POCKETBASE_BOT_*), so
+      # _ensure_pb_auth() succeeds on a fresh stg PB. Import the schema once after
+      # first deploy with scripts/provision-pb-schema.sh stg.
+      - PB_ADMIN_EMAIL=${POCKETBASE_BOT_EMAIL}
+      - PB_ADMIN_PASSWORD=${POCKETBASE_BOT_PASSWORD}
     expose:
       - 8090
     volumes:
-      - dev_listmonk_api_db:/pb_data
+      - stg_listmonk_api_db:/pb_data
     healthcheck:
       test: wget --no-verbose --tries=1 --spider http://localhost:8090/api/health || exit 1
       interval: 5s
@@ -66,14 +72,14 @@ services:
       bridge: null
       observability:
         aliases:
-          - dev_pocketbase
+          - stg_pocketbase
       dokploy-network:
         aliases:
-          - dev_listmonk_api_db
+          - stg_listmonk_api_db
 
   listmonk_app:
     image: listmonk/listmonk:v6.0.0
-    container_name: dev_listmonk_app
+    container_name: stg_listmonk_app
     restart: unless-stopped
     expose:
       - 9000
@@ -81,10 +87,10 @@ services:
       bridge: null
       observability:
         aliases:
-          - dev_listmonk_app
+          - stg_listmonk_app
       dokploy-network:
         aliases:
-          - dev_listmonk_app
+          - stg_listmonk_app
     hostname: listmonk.ailian.com.br
     depends_on:
       - listmonk_db
@@ -108,7 +114,7 @@ services:
 
   listmonk_db:
     image: postgres:17-alpine
-    container_name: dev_listmonk_db
+    container_name: stg_listmonk_db
     restart: unless-stopped
     expose:
       - 5432
@@ -116,7 +122,7 @@ services:
       bridge: null
       dokploy-network:
         aliases:
-          - dev_listmonk_db
+          - stg_listmonk_db
     environment:
       <<: *listmonk_db-credentials
     healthcheck:
@@ -126,7 +132,7 @@ services:
       retries: 6
     volumes:
       - type: volume
-        source: dev_listmonk-data
+        source: stg_listmonk-data
         target: /var/lib/postgresql/data
 
 networks:
@@ -138,5 +144,5 @@ networks:
     external: true
 
 volumes:
-  dev_listmonk_api_db:
-  dev_listmonk-data:
+  stg_listmonk_api_db:
+  stg_listmonk-data:

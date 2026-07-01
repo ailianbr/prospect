@@ -17,10 +17,11 @@ x-listmonk_db-credentials: &listmonk_db-credentials
 services:
 
   api:
-    image: ghcr.io/kerryhen/monk-api:latest
+    image: ghcr.io/ailianbr/monk-api:latest
     container_name: prd_listmonk_api
     pull_policy: always
     environment:
+      - ENVIRONMENT=prd
       - LISTMONK_USER=${LISTMONK_USER}
       - LISTMONK_TOKEN=${LISTMONK_TOKEN}
       - LISTMONK_API_URL=${LISTMONK_API_URL}

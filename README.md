@@ -1,6 +1,6 @@
 # Monk — Listmonk Multi-Client API
 
-![Coverage](https://raw.githubusercontent.com/Kerryhen/monk/development/badges/coverage.svg)
+![Coverage](https://raw.githubusercontent.com/ailianbr/prospect/development/badges/coverage.svg)
 
 A multitenancy middleware that adds per-client isolation on top of [Listmonk](https://listmonk.app/), an open-source email list management tool.
 
@@ -80,15 +80,22 @@ Releases are automated via Conventional Commits and release-please.
 
 ### Run all services
 
-```bash
-doppler run -- docker compose up
-```
-
-With live-reload for the API service:
+One command brings up a **fully-seeded** local stack — Postgres, Listmonk,
+PocketBase, and the API — with no manual admin or token setup:
 
 ```bash
-doppler run -- docker compose up --build
+doppler run -p prospect -c dev -- docker compose up --build
 ```
+
+On `up`, two idempotent one-shots run before the API starts (it waits on them):
+
+- **`pb-init`** imports the PocketBase control-plane schema; the PB superuser is
+  auto-bootstrapped from `POCKETBASE_BOT_EMAIL`/`POCKETBASE_BOT_PASSWORD`.
+- **`listmonk-init`** mints a Listmonk API user and hands `LISTMONK_USER` /
+  `LISTMONK_TOKEN` to the API through a shared volume.
+
+See **[`docs/ENVIRONMENTS.md`](docs/ENVIRONMENTS.md)** for the dev/stg/prd model
+and how to run the test suite against the local stack.
 
 ## Development (API service)
 
