@@ -20,18 +20,25 @@ services:
     pull_policy: always
     environment:
       - ENVIRONMENT=stg
-      - LISTMONK_USER=${LISTMONK_USER}
-      - LISTMONK_TOKEN=${LISTMONK_TOKEN}
       - LISTMONK_API_URL=${LISTMONK_API_URL}
       - POCKETBASE_BOT_EMAIL=${POCKETBASE_BOT_EMAIL}
       - POCKETBASE_BOT_PASSWORD=${POCKETBASE_BOT_PASSWORD}
       - POCKETBASE_API_URL=${POCKETBASE_API_URL}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT}
+    # LISTMONK_USER/TOKEN are minted by listmonk-init into the shared `stg_seed_env`
+    # volume; source them at startup so the deployed API can reach Listmonk.
+    command: ["sh", "-c", "set -a; . /seed/.env.local; set +a; exec python /services/api/main.py"]
     expose:
       - 8000
     depends_on:
-      - listmonk_app
-      - pocketbase
+      listmonk_app:
+        condition: service_healthy
+      pocketbase:
+        condition: service_healthy
+      listmonk-init:
+        condition: service_completed_successfully
+    volumes:
+      - stg_seed_env:/seed:ro
     networks:
       bridge: null
       observability:
@@ -40,6 +47,28 @@ services:
       dokploy-network:
         aliases:
           - stg_listmonk_api
+
+  # One-shot: provisions the `monk_api` Listmonk API user and writes
+  # LISTMONK_USER/LISTMONK_TOKEN into the shared seed volume the api sources.
+  # Mirrors the dev stack (docker-compose.yml) so those creds never need to live
+  # in Doppler/Dockploy. Re-mints (delete + recreate) the token on every deploy.
+  listmonk-init:
+    image: python:3.12-alpine
+    depends_on:
+      listmonk_app:
+        condition: service_healthy
+    environment:
+      LISTMONK_URL: http://listmonk_app:9000
+      LISTMONK_ADMIN_USER: ${LISTMONK_ADMIN_USER}
+      LISTMONK_ADMIN_PASSWORD: ${LISTMONK_ADMIN_PASSWORD}
+      ENV_LOCAL_PATH: /seed/.env.local
+    volumes:
+      - ./tools/dev/listmonk_init.py:/listmonk_init.py:ro
+      - stg_seed_env:/seed
+    command: ["python", "/listmonk_init.py"]
+    restart: "no"
+    networks:
+      - bridge
 
   pocketbase:
     image: ghcr.io/muchobien/pocketbase:0.36.7  # pinned (matches dev; verified schema import)
@@ -109,6 +138,11 @@ services:
       TZ: Etc/UTC
       LISTMONK_ADMIN_USER: ${LISTMONK_ADMIN_USER:-}
       LISTMONK_ADMIN_PASSWORD: ${LISTMONK_ADMIN_PASSWORD:-}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:9000/ || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
     volumes:
       - ./uploads:/listmonk/uploads:rw
 
@@ -146,3 +180,4 @@ networks:
 volumes:
   stg_listmonk_api_db:
   stg_listmonk-data:
+  stg_seed_env:
