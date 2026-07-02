@@ -18,6 +18,16 @@ from app.schemas import MessengerCampaignMeta, MessengerPayload, MessengerRecipi
 
 _TEST_INSTANCE_ID = os.getenv('TEST_CHATWOOT_INSTANCE_ID', '87v79w2os56q298')
 
+# The happy-path tests below require a fully PROVISIONED Chatwoot instance in
+# PocketBase (channel config + service secret for _TEST_INSTANCE_ID). That graph
+# isn't part of the core monk-api schema (pb_schema.json), so they're opt-in via
+# TEST_CHATWOOT_INSTANCE_ID — matching the sibling tests in test_chatwoot_handler.py.
+# The skip-path and endpoint tests below need no provisioning and always run.
+_requires_provisioned_instance = pytest.mark.skipif(
+    not os.getenv('TEST_CHATWOOT_INSTANCE_ID'),
+    reason='requires a provisioned Chatwoot instance (channel config + secret) in PocketBase',
+)
+
 # Number of Chatwoot API calls for a new contact (search + create + conversation + message)
 CHATWOOT_CALLS_NEW_CONTACT = 3
 
@@ -105,6 +115,7 @@ def chatwoot_session():
 # --------------------------------------------------------------------------- #
 
 
+@_requires_provisioned_instance
 def test_full_flow_reads_pb_config(handler, integration_payload, chatwoot_session):
     """_process_all fetches the real mxf config from PocketBase and sends 3 Chatwoot calls."""
     with patch('app.handlers.chatwoot.handler.requests.Session', return_value=chatwoot_session):
@@ -115,6 +126,7 @@ def test_full_flow_reads_pb_config(handler, integration_payload, chatwoot_sessio
     assert chatwoot_session.post.call_count == CHATWOOT_CALLS_NEW_CONTACT
 
 
+@_requires_provisioned_instance
 def test_resolved_variables_in_chatwoot_payload(handler, integration_payload, chatwoot_session):
     """processed_params in the message body must contain resolved variable values."""
     with patch('app.handlers.chatwoot.handler.requests.Session', return_value=chatwoot_session):
@@ -131,6 +143,7 @@ def test_resolved_variables_in_chatwoot_payload(handler, integration_payload, ch
     assert processed['3'] == 'Empresa'
 
 
+@_requires_provisioned_instance
 def test_instancia_fallback_default_used(handler, chatwoot_session):
     """When instancias has no record, template defaults are applied and recipient is not skipped."""
     payload = MessengerPayload(

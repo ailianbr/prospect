@@ -16,9 +16,6 @@ from app.schemas import (
     UpdateListSchema,
 )
 from app.sessions import PocketBaseSession, get_pocketbase_session
-from app.settings import Settings
-
-settings = Settings()
 
 router = APIRouter(
     prefix='/list',

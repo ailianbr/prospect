@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.5.0](https://github.com/Kerryhen/monk/compare/monk-api-v0.4.3...monk-api-v0.5.0) (2026-03-30)
+
+
+### Features
+
+* **api:** replace per-request PB login with self-refreshing token ([#39](https://github.com/Kerryhen/monk/issues/39)) ([a0b0df5](https://github.com/Kerryhen/monk/commit/a0b0df582114d5815428ec353c0a2a08869885fd)), closes [#37](https://github.com/Kerryhen/monk/issues/37)
+* release development → main ([c2a336c](https://github.com/Kerryhen/monk/commit/c2a336caa509f3fb052e918deff734ee281f1d8b))
+
+
+### Bug Fixes
+
+* **chatwoot:** log which PocketBase collection fails in fetch_chatwoot_config ([f25f993](https://github.com/Kerryhen/monk/commit/f25f99354ba7e47702a462c885eb22427f3bb4f1))
+* **infra:** isolate prd and stg docker networks + add client_id to logs ([#38](https://github.com/Kerryhen/monk/issues/38)) ([35eeae9](https://github.com/Kerryhen/monk/commit/35eeae9eb65aff1cc98492117ec58aa3b9e6701a))
+
+## [0.4.3](https://github.com/Kerryhen/monk/compare/monk-api-v0.4.2...monk-api-v0.4.3) (2026-03-26)
+
+
+### Bug Fixes
+
+* **api:** set default_list when existing default was cascade-deleted ([#34](https://github.com/Kerryhen/monk/issues/34)) ([869d401](https://github.com/Kerryhen/monk/commit/869d401f7afe18f7e3481d9f703045922a1823f5))
+
 ## [0.4.2](https://github.com/Kerryhen/monk/compare/monk-api-v0.4.1...monk-api-v0.4.2) (2026-03-26)
 
 

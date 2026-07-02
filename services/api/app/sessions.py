@@ -14,11 +14,9 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from app.context import enrich_wide_event
-from app.settings import Settings
+from app.settings import settings
 
 logger = logging.getLogger(__name__)
-
-settings = Settings()
 
 pb_client = PocketBase(settings.POCKETBASE_API_URL)
 
@@ -39,6 +37,12 @@ def _token_exp(token: str) -> float:
 
 
 def _ensure_pb_auth() -> None:
+    """Authenticate the PB client when needed.
+
+    Called lazily by PocketBaseSession (the first request that needs PocketBase),
+    never at import — so importing the app does no network I/O and can run without
+    a live PocketBase (tests, alembic, CLI tools).
+    """
     token = pb_client.auth_store.token
     if not token or time.time() >= (_token_exp(token) - _EXPIRY_THRESHOLD):
         try:
@@ -49,10 +53,6 @@ def _ensure_pb_auth() -> None:
         except Exception as e:
             logger.error('pocketbase.auth_failed', extra={'error': str(e)})
             raise HTTPException(status_code=503, detail=f'PocketBase auth failed: {e}')
-
-
-# authenticate on startup
-_ensure_pb_auth()
 
 
 @dataclass
@@ -78,9 +78,12 @@ def get_monk_session(
 
 
 class PocketBaseSession:
-    def __init__(self):
+    @property
+    def client(self) -> PocketBase:
+        # Lazily authenticate on first use so constructing the session — including
+        # the module-level `interface` in interface.py — does no network I/O at import.
         _ensure_pb_auth()
-        self.client = pb_client
+        return pb_client
 
 
 def get_pocketbase_session() -> PocketBaseSession:

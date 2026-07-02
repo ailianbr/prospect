@@ -10,12 +10,11 @@ from .context import enrich_wide_event
 from .logging_config import configure_logging
 from .middleware import WideEventMiddleware
 from .routers import campaign, channels, client, leads, lists, messenger
-from .settings import Settings
+from .settings import settings
 from .telemetry import configure_telemetry
 
 configure_logging()
 
-settings = Settings()
 app = FastAPI(version=version('listmonk'), docs_url=None, redoc_url=None)
 
 app.add_middleware(WideEventMiddleware)
@@ -40,7 +39,7 @@ async def scalar_docs():
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     enrich_wide_event({'error': {'type': type(exc).__name__, 'message': str(exc)}})
-    if settings.ENVIRONMENT == 'DEV':
+    if settings.is_dev:
         return JSONResponse(
             status_code=500,
             content={'detail': str(exc), 'traceback': traceback.format_exc()},

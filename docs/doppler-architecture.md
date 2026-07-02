@@ -13,7 +13,7 @@ All secrets are managed through Doppler instead of environment files or GitHub s
 
 ## Environments
 
-Three root environments exist in the `listmonk` Doppler project:
+Three root environments exist in the `prospect` Doppler project:
 
 | Environment | Where it runs | Purpose |
 |-------------|--------------|---------|
@@ -35,7 +35,7 @@ Contains everything needed to run the full docker compose stack locally:
 Contains only what the deployed API container needs:
 
 - API credentials (`LISTMONK_USER`, `LISTMONK_TOKEN`, `LISTMONK_API_URL`, `POCKETBASE_*`)
-- `DOCKPLOY_WEBHOOK` — URL to trigger a redeploy on Dockploy when a new `:dev` image is pushed
+- `DOCKPLOY_WEBHOOK` — URL to trigger a redeploy on Dockploy when a new `:stg` image is pushed
 
 ### `prd` — production environment (Dockploy)
 
@@ -66,7 +66,7 @@ Each environment has a **service token** — a read-only credential scoped to a 
 
 | Token | Scoped to | Stored in | Used by |
 |-------|-----------|-----------|---------|
-| `DOPPLER_TOKEN_STG` | `stg` config | `stg_act` (Doppler) + GitHub secret | `deploy-dev.yml`, `ci.yml`, `release.yml` test job |
+| `DOPPLER_TOKEN_STG` | `stg` config | `stg_act` (Doppler) + GitHub secret | `deploy-stg.yml`, `ci.yml`, `release.yml` test job |
 | `DOPPLER_TOKEN_PRD` | `prd` config | `prd_act` (Doppler) + GitHub secret | `release.yml` release job |
 
 Tokens are stored in the `_act` branch configs so that local `act` runs can inject them into the container the same way GitHub Actions does.
@@ -75,11 +75,11 @@ To rotate a token:
 
 ```bash
 # Create a new token for the config
-doppler configs tokens create "act-local" --config stg --project listmonk --plain
+doppler configs tokens create "act-local" --config stg --project prospect --plain
 
 # Update the stored value in the branch config and GitHub
-doppler secrets set DOPPLER_TOKEN_STG=<new-token> --config stg_act --project listmonk
-gh secret set DOPPLER_TOKEN_STG --body "<new-token>" -R Kerryhen/monk
+doppler secrets set DOPPLER_TOKEN_STG=<new-token> --config stg_act --project prospect
+gh secret set DOPPLER_TOKEN_STG --body "<new-token>" -R ailianbr/prospect
 ```
 
 ---
@@ -126,24 +126,24 @@ Only two secrets exist in the GitHub repository:
 ### Local `doppler.yaml` mapping (gitignored)
 
 ```
-repo root     → listmonk / dev_act
-services/api/ → listmonk / dev_local_test
+repo root     → prospect / dev_act
+services/api/ → prospect / dev_local_test
 ```
 
 ### Recreating branch configs from scratch
 
 ```bash
 # stg_act
-doppler configs create stg_act --project listmonk
-doppler secrets set DOCKPLOY_WEBHOOK=https://httpbin.org/get --config stg_act --project listmonk
-STG_TOKEN=$(doppler configs tokens create "act-local" --config stg --project listmonk --plain)
-doppler secrets set DOPPLER_TOKEN_STG="$STG_TOKEN" --config stg_act --project listmonk
-gh secret set DOPPLER_TOKEN_STG --body "$STG_TOKEN" -R Kerryhen/monk
+doppler configs create stg_act --project prospect
+doppler secrets set DOCKPLOY_WEBHOOK=https://httpbin.org/get --config stg_act --project prospect
+STG_TOKEN=$(doppler configs tokens create "act-local" --config stg --project prospect --plain)
+doppler secrets set DOPPLER_TOKEN_STG="$STG_TOKEN" --config stg_act --project prospect
+gh secret set DOPPLER_TOKEN_STG --body "$STG_TOKEN" -R ailianbr/prospect
 
 # prd_act
-doppler configs create prd_act --project listmonk
-doppler secrets set DOCKPLOY_WEBHOOK=https://httpbin.org/get --config prd_act --project listmonk
-PRD_TOKEN=$(doppler configs tokens create "act-local" --config prd --project listmonk --plain)
-doppler secrets set DOPPLER_TOKEN_PRD="$PRD_TOKEN" --config prd_act --project listmonk
-gh secret set DOPPLER_TOKEN_PRD --body "$PRD_TOKEN" -R Kerryhen/monk
+doppler configs create prd_act --project prospect
+doppler secrets set DOCKPLOY_WEBHOOK=https://httpbin.org/get --config prd_act --project prospect
+PRD_TOKEN=$(doppler configs tokens create "act-local" --config prd --project prospect --plain)
+doppler secrets set DOPPLER_TOKEN_PRD="$PRD_TOKEN" --config prd_act --project prospect
+gh secret set DOPPLER_TOKEN_PRD --body "$PRD_TOKEN" -R ailianbr/prospect
 ```

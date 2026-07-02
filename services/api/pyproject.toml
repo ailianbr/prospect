@@ -1,6 +1,6 @@
 [project]
 name = "listmonk"
-version = "0.4.2"
+version = "0.5.0"
 description = "Default template for PDM package"
 authors = [
     {name = "", email = ""},
@@ -39,13 +39,17 @@ asyncio_default_fixture_loop_scope = 'function'
 concurrency = ["thread", "greenlet"]
 
 [tool.taskipy.tasks]
-lint = 'ruff check'
+lint = 'ruff check && ruff format --check'
 pre_format = 'ruff check --fix'
 format = 'ruff format'
 run = 'fastapi dev app/main.py'
 pre_test = 'task format'
 test = 'pytest -s -x --cov=app --cov-report=xml -vv'
 post_test = 'coverage html'
+# CI test: same coverage output as `test`, but WITHOUT the pre_test format hook —
+# CI verifies, it must never rewrite the code it is checking (formatting is gated
+# by `lint` instead). No post hook, so it doesn't generate the local HTML report.
+ci_test = 'pytest -s -x --cov=app --cov-report=xml -vv'
 
 [tool.pdm]
 distribution = true

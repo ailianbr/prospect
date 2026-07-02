@@ -34,9 +34,8 @@ from app.schemas import (
     UpdateListSchema,
 )
 from app.sessions import Monk, PocketBaseSession, get_pocketbase_session
-from app.settings import Settings
+from app.settings import settings
 
-settings = Settings()
 url_monk = f'{settings.LISTMONK_API_URL}/lists'
 url_monk_campaigns = f'{settings.LISTMONK_API_URL}/campaigns'
 url_monk_subscribers = f'{settings.LISTMONK_API_URL}/import/subscribers'

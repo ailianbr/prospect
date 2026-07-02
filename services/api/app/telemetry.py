@@ -1,5 +1,4 @@
 import logging
-import os
 
 from opentelemetry import trace
 from opentelemetry._logs import set_logger_provider
@@ -15,6 +14,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 from .context import ENV_CONTEXT
+from .settings import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,9 @@ def configure_telemetry(app) -> None:
       into every LogRecord; _JSONFormatter picks these up automatically so
       wide events are correlated with traces without any call-site changes
     """
-    endpoint = os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT', '')
+    # Read at call time (once, at startup) via a fresh Settings() so the endpoint
+    # reflects the environment when telemetry is configured.
+    endpoint = Settings().OTEL_EXPORTER_OTLP_ENDPOINT
     if not endpoint:
         return
 
