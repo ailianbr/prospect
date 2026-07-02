@@ -48,7 +48,9 @@ jobs:
         run: |
           # listmonk-init wrote the minted API user/token into the shared seed volume
           docker run --rm -v prospect_seed_env:/seed alpine cat /seed/.env.local > /tmp/lm.env
-          set -a; . /tmp/lm.env; . ../.env.ci; set +a
+          # Source by absolute path — a relative `../.env.ci` fails to resolve on the
+          # runner from working-directory: services/api even though the file is at root.
+          set -a; . /tmp/lm.env; . "$GITHUB_WORKSPACE/.env.ci"; set +a
           LISTMONK_API_URL=http://localhost:9000/api \
           POCKETBASE_API_URL=http://localhost:8090 \
           OTEL_EXPORTER_OTLP_ENDPOINT= \
