@@ -13,17 +13,37 @@ jobs:
   test:
     uses: ./.github/workflows/integration-test.yml
 
+  # Smoke gate: production is only promoted if the LIVE staging stack is healthy.
+  # No auth needed — these are public endpoints of the deployed stg environment.
+  verify-stg:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Smoke-check the live staging stack
+        run: |
+          fail=0
+          check() {
+            code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 25 "$1" || echo 000)
+            printf '  %-4s %s\n' "$code" "$1"
+            [ "$code" = "$2" ] || { echo "::error::expected $2 from $1, got $code"; fail=1; }
+          }
+          check https://stg-listmonkapi.ailian.com.br/docs 200
+          check https://stg-listmonkapi.ailian.com.br/openapi.json 200
+          check https://stg-listmonk.ailian.com.br/ 200
+          check https://stg-listmonkdb.ailian.com.br/api/health 200
+          # Confirm the monk-api actually serves its FastAPI schema (not just a proxy 200).
+          curl -sS --max-time 25 https://stg-listmonkapi.ailian.com.br/openapi.json \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); assert d.get('info',{}).get('title') and d.get('paths'); print('  openapi ok: version', d['info']['version'], '| paths', len(d['paths']))" \
+            || { echo '::error::stg monk-api is not serving its OpenAPI schema'; fail=1; }
+          exit $fail
+
   release:
-    needs: test
+    needs: [test, verify-stg]
     runs-on: ubuntu-latest
     permissions:
       contents: write
       packages: write
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Doppler CLI
-        uses: dopplerhq/cli-action@v3
+      - uses: actions/checkout@v4  # needed for the workflow_dispatch version read
 
       - name: Read version and normalize owner
         id: ver
@@ -45,14 +65,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: services/api
-          push: true
-          tags: |
-            ghcr.io/${{ steps.ver.outputs.owner }}/monk-api:v${{ steps.ver.outputs.version }}
-            ghcr.io/${{ steps.ver.outputs.owner }}/monk-api:latest
+      # Promote the EXACT image verified on staging — retag by digest, no rebuild —
+      # so production runs byte-for-byte what the smoke gate just checked on stg.
+      - name: Promote :stg -> :vX.Y.Z + :latest
+        run: |
+          OWNER='${{ steps.ver.outputs.owner }}'
+          VERSION='${{ steps.ver.outputs.version }}'
+          docker buildx imagetools create \
+            -t "ghcr.io/$OWNER/monk-api:v$VERSION" \
+            -t "ghcr.io/$OWNER/monk-api:latest" \
+            "ghcr.io/$OWNER/monk-api:stg"
+          echo "promoted ghcr.io/$OWNER/monk-api:stg -> :v$VERSION + :latest"
+          docker buildx imagetools inspect "ghcr.io/$OWNER/monk-api:latest" | head -n 15
+
+      - name: Install Doppler CLI
+        uses: dopplerhq/cli-action@v3
 
       - name: Deploy to production (Dockploy)
         run: doppler run -- sh -c 'curl -s -X GET "$DOCKPLOY_WEBHOOK"'

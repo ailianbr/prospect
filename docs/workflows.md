@@ -119,18 +119,27 @@ Version bump rules (Conventional Commits):
 
 ```
 release published (tag monk-api-vX.Y.Z)
-  ├── test job        # same Doppler-backed pytest gate
-  └── release job (needs: test)
+  ├── test job            # ephemeral integration tests (integration-test.yml)
+  ├── verify-stg job      # smoke-gate the LIVE staging stack (public endpoints, no auth):
+  │     ├── GET stg-listmonkapi…/docs + /openapi.json → 200 (monk-api serving its schema)
+  │     ├── GET stg-listmonk…/ → 200 (Listmonk)
+  │     └── GET stg-listmonkdb…/api/health → 200 (PocketBase)
+  └── release job (needs: [test, verify-stg])
         ├── derive VERSION from tag (strip "monk-api-v"), lowercase OWNER
         ├── docker/login-action@v3 → ghcr.io (GITHUB_TOKEN)
-        ├── docker/build-push-action@v6
-        │     context: services/api
-        │     tags:
-        │       ghcr.io/ailianbr/monk-api:vX.Y.Z
-        │       ghcr.io/ailianbr/monk-api:latest
+        ├── PROMOTE (no rebuild): docker buildx imagetools create
+        │     ghcr.io/ailianbr/monk-api:stg  →  :vX.Y.Z + :latest
+        │     (retags by digest, so prod runs byte-for-byte what stg was verified on)
         └── doppler run -- curl -s "$DOCKPLOY_WEBHOOK"   # redeploy production
               DOPPLER_TOKEN: secrets.DOPPLER_TOKEN_PRD
 ```
+
+Production is **promoted, not rebuilt**: the release retags the exact `:stg` image
+(already built by `deploy-stg.yml` and verified live on staging) to `:vX.Y.Z` /
+`:latest`, and only after the `verify-stg` smoke gate passes — so a broken or
+down staging blocks the prod update. (Because release-please bumps the version on
+`main` *after* `:stg` was built from `development`, the promoted image's internal
+version string tracks the `development` build, not the release tag.)
 
 On `workflow_dispatch` the version is read from `services/api/pyproject.toml`
 instead of a tag. `concurrency: stg-integration-tests` is set with
@@ -141,9 +150,11 @@ instead of a tag. `concurrency: stg-integration-tests` is set with
 1. Merge feature work into `development` (CI gate), then merge `development` → `main`.
 2. release-please opens/updates a release PR on `main`. Review and **merge** it.
 3. Merging the release PR creates the GitHub Release + tag, which triggers
-   `release.yml` to build `:vX.Y.Z` + `:latest` and redeploy production.
+   `release.yml`: it smoke-checks live staging, then **promotes** `:stg` →
+   `:vX.Y.Z` + `:latest` and redeploys production. If staging is unhealthy the
+   `verify-stg` gate fails and prod is left untouched.
 4. Verify:
-   - Image appears at `ghcr.io/ailianbr/monk-api` under **Packages**
+   - `:vX.Y.Z` + `:latest` tags appear at `ghcr.io/ailianbr/monk-api` under **Packages**
    - Release tag `monk-api-vX.Y.Z` appears under **Releases**
    - Dockploy production stack picks up the new `:latest` image
 
