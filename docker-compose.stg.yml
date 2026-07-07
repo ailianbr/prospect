@@ -20,18 +20,25 @@ services:
     pull_policy: always
     environment:
       - ENVIRONMENT=stg
-      - LISTMONK_USER=${LISTMONK_USER}
-      - LISTMONK_TOKEN=${LISTMONK_TOKEN}
       - LISTMONK_API_URL=${LISTMONK_API_URL}
       - POCKETBASE_BOT_EMAIL=${POCKETBASE_BOT_EMAIL}
       - POCKETBASE_BOT_PASSWORD=${POCKETBASE_BOT_PASSWORD}
       - POCKETBASE_API_URL=${POCKETBASE_API_URL}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT}
+    # LISTMONK_USER/TOKEN are minted by listmonk-init into the shared `seed_env`
+    # volume; source them at startup so the built image's CMD still runs.
+    command: ["sh", "-c", "set -a; . /seed/.env.local; set +a; exec python /services/api/main.py"]
     expose:
       - 8000
     depends_on:
-      - listmonk_app
-      - pocketbase
+      listmonk_app:
+        condition: service_healthy
+      pocketbase:
+        condition: service_healthy
+      listmonk-init:
+        condition: service_completed_successfully
+    volumes:
+      - seed_env:/seed:ro
     networks:
       bridge: null
       observability:
@@ -81,6 +88,12 @@ services:
     image: listmonk/listmonk:v6.0.0
     container_name: stg_listmonk_app
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:9000/ || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 60s   # install/upgrade runs on first boot; don't fail probes during it
     expose:
       - 9000
     networks:
@@ -111,6 +124,27 @@ services:
       LISTMONK_ADMIN_PASSWORD: ${LISTMONK_ADMIN_PASSWORD:-}
     volumes:
       - ./uploads:/listmonk/uploads:rw
+
+  # One-shot: mint a Listmonk API user and write LISTMONK_USER/TOKEN into the
+  # shared `seed_env` volume, which `api` sources at startup. Mirrors the dev
+  # stack so stg needs no hand-set Listmonk credentials.
+  listmonk-init:
+    image: python:3.12-alpine
+    depends_on:
+      listmonk_app:
+        condition: service_healthy
+    environment:
+      LISTMONK_URL: http://listmonk_app:9000
+      LISTMONK_ADMIN_USER: ${LISTMONK_ADMIN_USER}
+      LISTMONK_ADMIN_PASSWORD: ${LISTMONK_ADMIN_PASSWORD}
+      ENV_LOCAL_PATH: /seed/.env.local
+    volumes:
+      - ./tools/dev/listmonk_init.py:/listmonk_init.py:ro
+      - seed_env:/seed
+    command: ["python", "/listmonk_init.py"]
+    restart: "no"
+    networks:
+      - bridge
 
   listmonk_db:
     image: postgres:17-alpine
@@ -146,3 +180,4 @@ networks:
 volumes:
   stg_listmonk_api_db:
   stg_listmonk-data:
+  seed_env:
