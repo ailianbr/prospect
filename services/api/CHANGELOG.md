@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.6.0](https://github.com/ailianbr/prospect/compare/monk-api-v0.5.0...monk-api-v0.6.0) (2026-07-08)
+
+
+### Features
+
+* **api:** add subscriber CRUD endpoints ([891caae](https://github.com/ailianbr/prospect/commit/891caae964d471ca2967271af402a4d9a861927b))
+* **api:** add subscriber CRUD endpoints with multitenancy ([9599036](https://github.com/ailianbr/prospect/commit/95990369c3207e7cb8a93f7fd2f5328b2ebbc496))
+* **env:** three-env (dev/stg/prd) setup, self-seeding dev stack, ephemeral-stack CI ([23fe570](https://github.com/ailianbr/prospect/commit/23fe570766efe0896ec016e9ddebdb57d526e75b))
+
+
+### Bug Fixes
+
+* **api:** resolve lint errors in subscriber endpoints ([a7d820c](https://github.com/ailianbr/prospect/commit/a7d820cd9030e3637540879c7589bd22189c225f))
+
 ## [0.5.0](https://github.com/Kerryhen/monk/compare/monk-api-v0.4.3...monk-api-v0.5.0) (2026-03-30)
 
 
