@@ -9,5 +9,6 @@ def test_health(client):
     assert response.status_code == HTTPStatus.OK
     body = response.json()
     assert body['status'] == 'ok'
+    assert body['service'] == 'monk-api'
     assert body['version']
     assert body['environment']
