@@ -151,4 +151,4 @@ release PR     → production deploy
 ```
 
 ### CI cascade
-Jobs in `deploy-dev.yml` run sequentially: `lint → test → deploy`. There is no reason to deploy if tests fail, and no reason to test if lint fails.
+Jobs in `deploy-stg.yml` run sequentially: `lint → test → deploy`. There is no reason to deploy if tests fail, and no reason to test if lint fails.

@@ -4,11 +4,19 @@ from http import HTTPStatus
 import pytest
 
 from app.interface import interface
-from app.schemas import ClientSchema, DeleteListSchema
+from app.schemas import (
+    ClientSchema,
+    CreateListSchema,
+    DeleteListSchema,
+    LM_CreateListSchema,
+    LM_CreateSubscriberSchema,
+    LM_UpdateSubscriberSchema,
+)
 
 TEST_EMAIL = 'testimport@example.com'
 
 MXF = {'X-Instance-ID': 'mxf'}
+OTHER = {'X-Instance-ID': 'other_test_client'}
 NEW_CLIENT = 'brand-new-client'
 NEW_CLIENT_HDR = {'X-Instance-ID': NEW_CLIENT}
 
@@ -116,3 +124,155 @@ def test_json_import_auto_creates_client_and_default_list(client, cleanup_new_cl
     assert response.status_code == HTTPStatus.OK
     info = interface.get_client(ClientSchema(id=NEW_CLIENT))
     assert info.default_list is not None
+
+
+# =============================================================================
+# Subscriber CRUD fixtures & tests
+# =============================================================================
+
+
+@pytest.fixture
+def created_subscriber(created_list):
+    """Create a subscriber in the mxf client's default list."""
+    sub = interface.create_subscriber(
+        ClientSchema(id='mxf'),
+        LM_CreateSubscriberSchema(email=TEST_EMAIL, name='Test User'),
+    )
+    return sub.data
+
+
+def test_list_subscribers_default_list(client, created_subscriber):
+    """GET /subscriber returns subscribers from the client's default list."""
+    response = client.get('/v1/subscriber', headers=MXF)
+    assert response.status_code == HTTPStatus.OK
+    body = response.json()
+    assert 'data' in body
+    assert isinstance(body['data']['results'], list)
+
+
+def test_list_subscribers_specific_list(client, created_list, created_subscriber):
+    """GET /subscriber?list_id= scoped to a client-owned list."""
+    # Import into the specific list first so it appears there
+    interface.create_subscriber(
+        ClientSchema(id='mxf'),
+        LM_CreateSubscriberSchema(email='second_test@example.com', name='Second', lists=[created_list['id']]),
+    )
+    response = client.get(f'/v1/subscriber?list_id={created_list["id"]}', headers=MXF)
+    assert response.status_code == HTTPStatus.OK
+    interface.delete_subscriber_by_email('second_test@example.com')
+
+
+def test_list_subscribers_invalid_list_returns_404(client, created_list):
+    """GET /subscriber with a list not owned by the client returns 404."""
+    response = client.get('/v1/subscriber?list_id=99999', headers=MXF)
+    assert response.status_code == HTTPStatus.NOT_FOUND
+
+
+def test_get_subscriber(client, created_subscriber):
+    """GET /subscriber/{id} returns the subscriber when it belongs to the client."""
+    response = client.get(f'/v1/subscriber/{created_subscriber.id}', headers=MXF)
+    assert response.status_code == HTTPStatus.OK
+    assert response.json()['data']['email'] == TEST_EMAIL
+
+
+def test_get_subscriber_foreign_returns_403(client, created_subscriber):
+    """GET /subscriber/{id} returns 403 when subscriber doesn't belong to requesting client."""
+    response = client.get(f'/v1/subscriber/{created_subscriber.id}', headers=OTHER)
+    assert response.status_code == HTTPStatus.FORBIDDEN
+
+
+def test_create_subscriber_to_default_list(client, created_list):
+    """POST /subscriber without lists enrolls subscriber in the client's default list."""
+    response = client.post(
+        '/v1/subscriber',
+        json={'email': TEST_EMAIL, 'name': 'Test User'},
+        headers=MXF,
+    )
+    assert response.status_code == HTTPStatus.CREATED
+    assert response.json()['data']['email'] == TEST_EMAIL
+
+
+def test_create_subscriber_to_specific_list(client, created_list):
+    """POST /subscriber with a valid list_id enrolls in that list."""
+    response = client.post(
+        '/v1/subscriber',
+        json={'email': TEST_EMAIL, 'name': 'Test User', 'lists': [created_list['id']]},
+        headers=MXF,
+    )
+    assert response.status_code == HTTPStatus.CREATED
+
+
+def test_create_subscriber_invalid_list_returns_403(client, created_list):
+    """POST /subscriber with a list not owned by the client returns 403."""
+    response = client.post(
+        '/v1/subscriber',
+        json={'email': TEST_EMAIL, 'name': 'Test User', 'lists': [99999]},
+        headers=MXF,
+    )
+    assert response.status_code == HTTPStatus.FORBIDDEN
+
+
+def test_update_subscriber(client, created_subscriber):
+    """PUT /subscriber/{id} updates subscriber fields."""
+    response = client.put(
+        f'/v1/subscriber/{created_subscriber.id}',
+        json={'name': 'Updated Name'},
+        headers=MXF,
+    )
+    assert response.status_code == HTTPStatus.OK
+    assert response.json()['data']['name'] == 'Updated Name'
+
+
+def test_update_subscriber_foreign_returns_403(client, created_subscriber):
+    """PUT /subscriber/{id} returns 403 when subscriber doesn't belong to requesting client."""
+    response = client.put(
+        f'/v1/subscriber/{created_subscriber.id}',
+        json={'name': 'Hacked'},
+        headers=OTHER,
+    )
+    assert response.status_code == HTTPStatus.FORBIDDEN
+
+
+def test_delete_subscriber_hard(client, created_subscriber):
+    """DELETE /subscriber/{id} without list_id permanently removes the subscriber."""
+    sub_id = created_subscriber.id
+    response = client.delete(f'/v1/subscriber/{sub_id}', headers=MXF)
+    assert response.status_code == HTTPStatus.OK
+    # Subscriber should be gone — a subsequent GET returns 404
+    get_response = client.get(f'/v1/subscriber/{sub_id}', headers=MXF)
+    assert get_response.status_code == HTTPStatus.NOT_FOUND
+
+
+def test_delete_subscriber_soft(client, created_subscriber):
+    """DELETE /subscriber/{id}?list_id=X unsubscribes from that list, doesn't hard-delete."""
+    # Create a secondary list guaranteed to not be the default (default was already set when
+    # created_subscriber was created above).
+    secondary = interface.create_list(
+        CreateListSchema(
+            client=ClientSchema(id='mxf'),
+            list=LM_CreateListSchema(name='Soft Delete Test List', type='private', optin='single'),
+        )
+    )
+    try:
+        # Enroll subscriber in the secondary list too
+        interface.update_subscriber(
+            created_subscriber.id,
+            ClientSchema(id='mxf'),
+            LM_UpdateSubscriberSchema(lists=[*[lst.id for lst in created_subscriber.lists], secondary.id]),
+        )
+        response = client.delete(
+            f'/v1/subscriber/{created_subscriber.id}?list_id={secondary.id}',
+            headers=MXF,
+        )
+        assert response.status_code == HTTPStatus.OK
+        # Subscriber should still exist (still in default list)
+        get_response = client.get(f'/v1/subscriber/{created_subscriber.id}', headers=MXF)
+        assert get_response.status_code == HTTPStatus.OK
+    finally:
+        interface.delete_list(DeleteListSchema(client=ClientSchema(id='mxf'), id=[secondary.id]))
+
+
+def test_delete_subscriber_foreign_returns_403(client, created_subscriber):
+    """DELETE /subscriber/{id} returns 403 when subscriber doesn't belong to requesting client."""
+    response = client.delete(f'/v1/subscriber/{created_subscriber.id}', headers=OTHER)
+    assert response.status_code == HTTPStatus.FORBIDDEN

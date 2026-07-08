@@ -1,4 +1,4 @@
-name: Deploy Dev
+name: Deploy Staging
 
 on:
   push:
@@ -31,38 +31,9 @@ jobs:
 
   test:
     needs: lint
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: services/api
-    steps:
-      - uses: actions/checkout@v4
+    uses: ./.github/workflows/integration-test.yml
 
-      - name: Install Doppler CLI
-        uses: dopplerhq/cli-action@v3
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.14'
-
-      - name: Install PDM
-        run: pip install pdm
-
-      - name: Install dependencies
-        run: pdm install --dev
-
-      - name: Run tests
-        run: doppler run -- pdm run task test
-        env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN_STG }}
-
-      - name: Upload coverage report
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-xml
-          path: services/api/coverage.xml
-
-  deploy-dev:
+  deploy-stg:
     needs: test
     runs-on: ubuntu-latest
     permissions:
@@ -98,17 +69,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push dev image
+      - name: Build and push staging image
         uses: docker/build-push-action@v6
         with:
           context: services/api
           push: true
-          tags: ghcr.io/${{ env.OWNER }}/monk-api:dev
+          tags: ghcr.io/${{ env.OWNER }}/monk-api:stg
 
       - name: Install Doppler CLI
         uses: dopplerhq/cli-action@v3
 
-      - name: Redeploy Dockploy dev environment
+      - name: Redeploy Dockploy staging environment
         run: doppler run -- sh -c 'curl -s -X GET "$DOCKPLOY_WEBHOOK"'
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN_STG }}

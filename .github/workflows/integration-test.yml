@@ -1,0 +1,69 @@
+name: Integration Tests
+
+# Reusable test job. Boots the self-seeding compose stack (Listmonk + PocketBase +
+# Postgres) with throwaway CI secrets from .env.ci, runs the suite against it, and
+# tears it down. Needs no DOPPLER_TOKEN and no live stg infrastructure.
+on:
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      COMPOSE_PROJECT_NAME: prospect   # deterministic volume name (prospect_seed_env)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Install PDM
+        run: pip install pdm
+
+      - name: Install dependencies
+        working-directory: services/api
+        run: pdm install --dev
+
+      - name: Bring up the self-seeding stack
+        run: |
+          docker compose --env-file .env.ci up -d listmonk_db pocketbase listmonk_app
+          # `compose --wait` is flaky with Listmonk's install-on-first-boot; poll instead.
+          for i in $(seq 1 60); do
+            la=$(docker inspect listmonk_app -f '{{.State.Health.Status}}' 2>/dev/null || echo none)
+            pb=$(docker inspect prospect-pocketbase-1 -f '{{.State.Health.Status}}' 2>/dev/null || echo none)
+            [ "$la" = healthy ] && [ "$pb" = healthy ] && break
+            sleep 3
+          done
+          if [ "$la" != healthy ] || [ "$pb" != healthy ]; then
+            echo "::error::infra not healthy (listmonk_app=$la pocketbase=$pb)"
+            docker compose --env-file .env.ci logs --tail=50 listmonk_app pocketbase
+            exit 1
+          fi
+          docker compose --env-file .env.ci run --rm --no-deps pb-init
+          docker compose --env-file .env.ci run --rm --no-deps listmonk-init
+
+      - name: Run tests
+        working-directory: services/api
+        run: |
+          # listmonk-init wrote the minted API user/token into the shared seed volume
+          docker run --rm -v prospect_seed_env:/seed alpine cat /seed/.env.local > /tmp/lm.env
+          # Source by absolute path — a relative `../.env.ci` fails to resolve on the
+          # runner from working-directory: services/api even though the file is at root.
+          set -a; . /tmp/lm.env; . "$GITHUB_WORKSPACE/.env.ci"; set +a
+          LISTMONK_API_URL=http://localhost:9000/api \
+          POCKETBASE_API_URL=http://localhost:8090 \
+          OTEL_EXPORTER_OTLP_ENDPOINT= \
+          pdm run task ci_test
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: services/api/coverage.xml
+          if-no-files-found: ignore
+
+      - name: Tear down
+        if: always()
+        run: docker compose --env-file .env.ci down -v

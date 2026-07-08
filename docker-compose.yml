@@ -6,17 +6,28 @@ x-listmonk_db-credentials: &listmonk_db-credentials                             
 services:
 
   api:
-    image: ghcr.io/kerryhen/monk-api:latest
+    image: ghcr.io/ailianbr/monk-api:latest
     build:
       context: ./services/api
     environment:
-      - LISTMONK_USER=${LISTMONK_USER}
-      - LISTMONK_TOKEN=${LISTMONK_TOKEN}
+      - ENVIRONMENT=dev
       - LISTMONK_API_URL=${LISTMONK_API_URL}
       - POCKETBASE_BOT_EMAIL=${POCKETBASE_BOT_EMAIL}
       - POCKETBASE_BOT_PASSWORD=${POCKETBASE_BOT_PASSWORD}
       - POCKETBASE_API_URL=${POCKETBASE_API_URL}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+    # LISTMONK_USER/TOKEN are minted by listmonk-init into the shared `seed_env`
+    # volume; source them at startup so a plain `docker compose up` works end-to-end.
+    command: ["sh", "-c", "set -a; . /seed/.env.local; set +a; exec python /services/api/main.py"]
+    depends_on:
+      listmonk_app:
+        condition: service_healthy
+      pocketbase:
+        condition: service_healthy
+      pb-init:
+        condition: service_completed_successfully
+      listmonk-init:
+        condition: service_completed_successfully
     ports:
       - 8000:8000
     develop:
@@ -32,11 +43,13 @@ services:
         - action: rebuild
           path: ./services/api/pdm.lock
 
+    volumes:
+      - seed_env:/seed:ro
     networks:
       - bridge
-    
+
   pocketbase:
-    image: ghcr.io/muchobien/pocketbase:latest
+    image: ghcr.io/muchobien/pocketbase:0.36.7  # pinned for reproducibility
     restart: unless-stopped
     command:
       - --encryptionEnv
@@ -44,9 +57,13 @@ services:
     environment:
       - ENCRYPTION=${ENCRYPTION}
       - PB_INVITATION_PEPPER=${PB_INVITATION_PEPPER}
-      - N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL}
+      - N8N_WEBHOOK_URL=${N8N_WEBHOOK_URL:-}
       - N8N_WEBHOOK_SECRET=${N8N_WEBHOOK_SECRET}
       - ENVIROMENT=${ENVIROMENT}
+      # Bootstrap the superuser the app authenticates as (POCKETBASE_BOT_*), so
+      # _ensure_pb_auth() succeeds on a fresh PB with no manual admin setup.
+      - PB_ADMIN_EMAIL=${POCKETBASE_BOT_EMAIL}
+      - PB_ADMIN_PASSWORD=${POCKETBASE_BOT_PASSWORD}
     ports:
       - 8090:8090
     volumes:
@@ -63,8 +80,14 @@ services:
     image: listmonk/listmonk:latest
     container_name: listmonk_app
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:9000/ || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 60s   # install/upgrade runs on first boot; don't fail probes during it
     ports:
-      - 9000:9000                                           # To change the externally exposed port, change to: $custom_port:9000
+      - 9000:9000                                          # To change the externally exposed port, change to: $custom_port:9000
     networks:
       - bridge
     hostname: listmonk.ailian.com.br                            # Recommend using FQDN for hostname
@@ -123,6 +146,52 @@ services:
         source: listmonk-data
         target: /var/lib/postgresql/data
 
+  # ── dev seeding (one-shot, idempotent) — mirrors conectai's pb-init ──────────
+  # Both run to completion before `api` starts (it depends_on them with
+  # service_completed_successfully), so a fresh `up` is fully self-sufficient —
+  # no manual PocketBase admin or Listmonk API-token setup.
+  #   pb-init      : import the dev/test schema (pb_schema.dev.json) + seed the chatwoot
+  #                  instance graph so the chatwoot integration/channel tests run green.
+  #   listmonk-init: mint a Listmonk API user and write LISTMONK_USER/TOKEN into
+  #                  the shared `seed_env` volume, which `api` sources at startup.
+  pb-init:
+    image: python:3.12-alpine
+    depends_on:
+      pocketbase:
+        condition: service_healthy
+    environment:
+      PB_URL: ${POCKETBASE_API_URL}
+      PB_ADMIN_EMAIL: ${POCKETBASE_BOT_EMAIL}
+      PB_ADMIN_PASSWORD: ${POCKETBASE_BOT_PASSWORD}
+      SCHEMA_PATH: /schema.json
+      TEST_CHATWOOT_INSTANCE_ID: ${TEST_CHATWOOT_INSTANCE_ID:-87v79w2os56q298}
+    volumes:
+      - ./tools/dev/pb_init.py:/pb_init.py:ro
+      - ./tools/dev/seed_chatwoot.py:/seed_chatwoot.py:ro
+      - ./services/pocketbase/pb_schema.dev.json:/schema.json:ro
+    command: ["sh", "-c", "python /pb_init.py && python /seed_chatwoot.py"]
+    restart: "no"
+    networks:
+      - bridge
+
+  listmonk-init:
+    image: python:3.12-alpine
+    depends_on:
+      listmonk_app:
+        condition: service_healthy
+    environment:
+      LISTMONK_URL: http://listmonk_app:9000
+      LISTMONK_ADMIN_USER: ${LISTMONK_ADMIN_USER}
+      LISTMONK_ADMIN_PASSWORD: ${LISTMONK_ADMIN_PASSWORD}
+      ENV_LOCAL_PATH: /seed/.env.local
+    volumes:
+      - ./tools/dev/listmonk_init.py:/listmonk_init.py:ro
+      - seed_env:/seed
+    command: ["python", "/listmonk_init.py"]
+    restart: "no"
+    networks:
+      - bridge
+
 networks:
   bridge:
 
@@ -131,4 +200,5 @@ volumes:
     external: true
   pocketbase:
   listmonk-data:
+  seed_env:
 

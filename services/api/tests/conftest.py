@@ -14,9 +14,7 @@ from app.schemas import (
     LM_CreateListSchema,
 )
 from app.sessions import MonkSession, get_monk_session
-from app.settings import Settings
-
-settings = Settings()
+from app.settings import settings
 
 
 @pytest.fixture(autouse=True)

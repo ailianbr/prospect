@@ -157,9 +157,12 @@ def test_unknown_channel_templates_returns_404(client):
 # ---------------------------------------------------------------------------
 
 
+# This fetches templates from the live Chatwoot API (not mocked), so it needs a reachable
+# Chatwoot — not just a seeded PocketBase instance. Gate it on TEST_CHATWOOT_LIVE so the
+# seeded-only dev/CI runs (which set TEST_CHATWOOT_INSTANCE_ID) don't trip on it.
 @pytest.mark.skipif(
-    not os.getenv('TEST_CHATWOOT_INSTANCE_ID'),
-    reason='requires TEST_CHATWOOT_INSTANCE_ID',
+    not os.getenv('TEST_CHATWOOT_LIVE'),
+    reason='requires a reachable live Chatwoot (set TEST_CHATWOOT_LIVE=1)',
 )
 def test_list_templates_integration_returns_templates(client):
     """Integration: GET /v1/channels/chat/whatsapp/templates hits real PocketBase and Chatwoot API."""
