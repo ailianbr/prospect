@@ -119,11 +119,15 @@ Version bump rules (Conventional Commits):
 
 ```
 release published (tag monk-api-vX.Y.Z)
-  ├── test job        # same Doppler-backed pytest gate
-  └── release job (needs: test)
+  ├── test job            # ephemeral integration tests (integration-test.yml)
+  ├── verify-stg job      # smoke-gate the LIVE staging stack (public endpoints, no auth):
+  │     ├── GET stg-listmonkapi…/docs + /openapi.json → 200 (monk-api serving its schema)
+  │     ├── GET stg-listmonk…/ → 200 (Listmonk)
+  │     └── GET stg-listmonkdb…/api/health → 200 (PocketBase)
+  └── release job (needs: [test, verify-stg])
         ├── derive VERSION from tag (strip "monk-api-v"), lowercase OWNER
         ├── docker/login-action@v3 → ghcr.io (GITHUB_TOKEN)
-        ├── docker/build-push-action@v6
+        ├── docker/build-push-action@v6      # rebuilt from main at the release commit
         │     context: services/api
         │     tags:
         │       ghcr.io/ailianbr/monk-api:vX.Y.Z
@@ -131,6 +135,11 @@ release published (tag monk-api-vX.Y.Z)
         └── doppler run -- curl -s "$DOCKPLOY_WEBHOOK"   # redeploy production
               DOPPLER_TOKEN: secrets.DOPPLER_TOKEN_PRD
 ```
+
+Production is **gated on live staging**: the `release` job only runs once both `test`
+and `verify-stg` pass, so a broken or down staging blocks the prod build/deploy. The
+prod image is **built from `main`** at the release commit (not promoted from `:stg`),
+so its reported version matches the release tag.
 
 On `workflow_dispatch` the version is read from `services/api/pyproject.toml`
 instead of a tag. `concurrency: stg-integration-tests` is set with
@@ -141,7 +150,9 @@ instead of a tag. `concurrency: stg-integration-tests` is set with
 1. Merge feature work into `development` (CI gate), then merge `development` → `main`.
 2. release-please opens/updates a release PR on `main`. Review and **merge** it.
 3. Merging the release PR creates the GitHub Release + tag, which triggers
-   `release.yml` to build `:vX.Y.Z` + `:latest` and redeploy production.
+   `release.yml`: it smoke-checks live staging (`verify-stg`), then builds `:vX.Y.Z`
+   + `:latest` and redeploys production. If staging is unhealthy the gate fails and
+   prod is left untouched.
 4. Verify:
    - Image appears at `ghcr.io/ailianbr/monk-api` under **Packages**
    - Release tag `monk-api-vX.Y.Z` appears under **Releases**
