@@ -2,7 +2,8 @@
 
 Four GitHub Actions workflows handle quality checks, staging deploys, versioning,
 and production releases. Secrets flow through [Doppler](doppler-architecture.md),
-images are published to GHCR, and deploys are pull-based via Dockploy webhooks.
+images are published to GHCR, and deploys are triggered via the Dockploy API
+(`compose.deploy`, which forces a re-pull of the freshly-built image).
 
 ```
 feat/* | fix/*  ──PR→main──►  development  ──merge→main──►  release-please PR  ──merge──►  GitHub Release
@@ -73,8 +74,8 @@ push → development
         ├── docker/build-push-action@v6
         │     context: services/api
         │     tag: ghcr.io/<owner>/monk-api:stg
-        └── doppler run -- curl -s "$DOCKPLOY_WEBHOOK"   # redeploy staging
-              DOPPLER_TOKEN: secrets.DOPPLER_TOKEN_STG
+        └── POST admin.ailian.com.br/api/compose.deploy   # force stg redeploy (re-pulls :stg)
+              x-api-key: secrets.DOKPLOY_API_KEY
 ```
 
 `<owner>` is the repository owner lowercased (`ailianbr`), so the image is
@@ -132,8 +133,8 @@ release published (tag monk-api-vX.Y.Z)
         │     tags:
         │       ghcr.io/ailianbr/monk-api:vX.Y.Z
         │       ghcr.io/ailianbr/monk-api:latest
-        └── doppler run -- curl -s "$DOCKPLOY_WEBHOOK"   # redeploy production
-              DOPPLER_TOKEN: secrets.DOPPLER_TOKEN_PRD
+        └── POST admin.ailian.com.br/api/compose.deploy   # force prod redeploy (re-pulls :latest)
+              x-api-key: secrets.DOKPLOY_API_KEY
 ```
 
 Production is **gated on live staging**: the `release` job only runs once both `test`
@@ -162,14 +163,17 @@ instead of a tag. `concurrency: stg-integration-tests` is set with
 
 ## Secrets & Deploy Targets
 
-- **Doppler** holds all app secrets. CI only stores two GitHub secrets —
-  `DOPPLER_TOKEN_STG` and `DOPPLER_TOKEN_PRD` — plus `RELEASE_PAT` for
-  release-please. See [doppler-architecture.md](doppler-architecture.md).
+- **Doppler** holds all app secrets. CI stores GitHub secrets `DOPPLER_TOKEN_STG`
+  and `DOPPLER_TOKEN_PRD` (injected into the integration tests), `RELEASE_PAT` for
+  release-please, and **`DOKPLOY_API_KEY`** (the Dokploy `x-api-key`) used by the
+  deploy jobs. See [doppler-architecture.md](doppler-architecture.md).
 - **GHCR** (`ghcr.io/ailianbr/monk-api`) hosts the images; pushes authenticate
   with the auto-provided `GITHUB_TOKEN`.
-- **Dockploy** runs the staging (`stg`) and production (`prd`) stacks and pulls
-  new images when the `DOCKPLOY_WEBHOOK` is hit. The in-repo
-  `docker-compose.stg.yml` / `docker-compose.prd.yml` describe those stacks.
+- **Dockploy** runs the staging (`stg`) and production (`prd`) stacks. The deploy
+  jobs call `POST /api/compose.deploy` (force redeploy) so the stack re-pulls the
+  newly-built image — the older `DOCKPLOY_WEBHOOK` is a no-op on git-source
+  composes when the git SHA is unchanged. The in-repo `docker-compose.stg.yml` /
+  `docker-compose.prd.yml` describe those stacks.
 
 ---
 
@@ -204,9 +208,9 @@ act pull_request --dryrun
 ```
 
 `act` uses `catthehacker/ubuntu:act-latest` (set in `.actrc`), matching the
-`ubuntu-latest` runner used in CI. The `*_act` Doppler branch configs override
-`DOCKPLOY_WEBHOOK` with a mock URL so local runs never trigger a real deploy —
-see [doppler-architecture.md](doppler-architecture.md#branch-configs).
+`ubuntu-latest` runner used in CI. The deploy steps call the Dokploy
+`compose.deploy` API with `DOKPLOY_API_KEY`, which isn't provided under `act`, so
+local runs can't trigger a real deploy — run only the `lint`/`test` jobs locally.
 
 > The release/deploy jobs need `GITHUB_TOKEN` with `packages: write` /
 > `contents: write` scopes (auto-provided by GitHub Actions, not available under

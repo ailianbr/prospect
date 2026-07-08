@@ -76,10 +76,17 @@ jobs:
           push: true
           tags: ghcr.io/${{ env.OWNER }}/monk-api:stg
 
-      - name: Install Doppler CLI
-        uses: dopplerhq/cli-action@v3
-
-      - name: Redeploy Dockploy staging environment
-        run: doppler run -- sh -c 'curl -s -X GET "$DOCKPLOY_WEBHOOK"'
+      # Force a redeploy via the Dokploy API (not the plain webhook): on git-source
+      # composes the webhook is a no-op when the git SHA is unchanged, so pull_policy
+      # never re-pulls the freshly-built image. compose.deploy re-pulls + recreates.
+      # composeId is the `porspect-stg` compose; update it if that compose is recreated.
+      - name: Redeploy staging (Dokploy force redeploy)
         env:
-          DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN_STG }}
+          DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
+        run: |
+          code=$(curl -sS -o /tmp/deploy.out -w '%{http_code}' -X POST \
+            -H "x-api-key: $DOKPLOY_API_KEY" -H 'content-type: application/json' \
+            -d '{"composeId":"cbu5F_AtfwjD7N5RNTfvH"}' \
+            https://admin.ailian.com.br/api/compose.deploy)
+          echo "compose.deploy -> HTTP $code"; cat /tmp/deploy.out 2>/dev/null; echo
+          case "$code" in 2*) echo "staging redeploy triggered";; *) echo "::error::Dokploy compose.deploy failed ($code)"; exit 1;; esac
