@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.0](https://github.com/ailianbr/prospect/compare/monk-api-v0.8.0...monk-api-v0.9.0) (2026-07-08)
+
+
+### Features
+
+* **api:** include service name in /health ([332e16e](https://github.com/ailianbr/prospect/commit/332e16efe83600fb8371b9afe4f3c8d0435a7f18))
+* **api:** include service name in /health ([6ed8698](https://github.com/ailianbr/prospect/commit/6ed86987d3ba88d1a7c4c5c1a3e79fc50630aeda))
+
 ## [0.8.0](https://github.com/ailianbr/prospect/compare/monk-api-v0.7.0...monk-api-v0.8.0) (2026-07-08)
 
 
