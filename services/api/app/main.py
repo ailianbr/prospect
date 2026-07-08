@@ -36,6 +36,12 @@ async def scalar_docs():
     return get_scalar_api_reference(openapi_url=app.openapi_url, title=app.title)
 
 
+@app.get('/health')
+async def health():
+    """Unauthenticated liveness/version probe for uptime checks and deploy verification."""
+    return {'status': 'ok', 'version': version('listmonk')}
+
+
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     enrich_wide_event({'error': {'type': type(exc).__name__, 'message': str(exc)}})
