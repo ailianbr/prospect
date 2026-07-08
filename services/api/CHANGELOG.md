@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.0](https://github.com/ailianbr/prospect/compare/monk-api-v0.6.0...monk-api-v0.7.0) (2026-07-08)
+
+
+### Features
+
+* **api:** /health endpoint + ci: gate prod deploy on live staging ([bfd0cea](https://github.com/ailianbr/prospect/commit/bfd0cea38330f337ac94e9324e481fb45fd62fe8))
+* **api:** add unauthenticated /health endpoint ([4cabb7d](https://github.com/ailianbr/prospect/commit/4cabb7dad2afa172887db1a75653ec139c6a4655))
+
 ## [0.6.0](https://github.com/ailianbr/prospect/compare/monk-api-v0.5.0...monk-api-v0.6.0) (2026-07-08)
 
 
