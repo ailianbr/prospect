@@ -77,7 +77,12 @@ jobs:
             ghcr.io/${{ steps.ver.outputs.owner }}/monk-api:v${{ steps.ver.outputs.version }}
             ghcr.io/${{ steps.ver.outputs.owner }}/monk-api:latest
 
-      - name: Deploy to production (Dockploy)
-        run: doppler run -- sh -c 'curl -s -X GET "$DOCKPLOY_WEBHOOK"'
+      # Dokploy's compose deploy webhook is the git-provider push endpoint: it needs
+      # the X-GitHub-Event header + a {"ref": "refs/heads/<branch>"} body matching the
+      # compose's branch (prod tracks main), and follows a 301 (-L). A bare GET/POST
+      # returns "Branch Not Match" and deploys nothing. -f makes a non-2xx fail the job.
+      - name: Deploy to production (Dokploy deploy webhook)
+        run: |
+          doppler run -- sh -c 'curl -fsSL -X POST -H "X-GitHub-Event: push" -H "content-type: application/json" -d "{\"ref\":\"refs/heads/main\"}" "$DOCKPLOY_WEBHOOK"'
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN_PRD }}
