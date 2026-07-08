@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.0](https://github.com/ailianbr/prospect/compare/monk-api-v0.7.0...monk-api-v0.8.0) (2026-07-08)
+
+
+### Features
+
+* **api:** report environment in /health ([6c44687](https://github.com/ailianbr/prospect/commit/6c446876405a33e9daab710e33a5185c1bfd71ce))
+* **api:** report environment in /health ([ca5493c](https://github.com/ailianbr/prospect/commit/ca5493c91b94e48ac7b35993b2a15d2d01f537ff))
+
 ## [0.7.0](https://github.com/ailianbr/prospect/compare/monk-api-v0.6.0...monk-api-v0.7.0) (2026-07-08)
 
 
