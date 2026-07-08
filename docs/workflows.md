@@ -73,7 +73,8 @@ push → development
         ├── docker/build-push-action@v6
         │     context: services/api
         │     tag: ghcr.io/<owner>/monk-api:stg
-        └── doppler run -- curl -s "$DOCKPLOY_WEBHOOK"   # redeploy staging
+        └── POST "$DOCKPLOY_WEBHOOK"   # redeploy staging (re-pulls :stg)
+              header: X-GitHub-Event: push · body: {"ref":"refs/heads/development"}
               DOPPLER_TOKEN: secrets.DOPPLER_TOKEN_STG
 ```
 
@@ -132,7 +133,8 @@ release published (tag monk-api-vX.Y.Z)
         │     tags:
         │       ghcr.io/ailianbr/monk-api:vX.Y.Z
         │       ghcr.io/ailianbr/monk-api:latest
-        └── doppler run -- curl -s "$DOCKPLOY_WEBHOOK"   # redeploy production
+        └── POST "$DOCKPLOY_WEBHOOK"   # redeploy production (re-pulls :latest)
+              header: X-GitHub-Event: push · body: {"ref":"refs/heads/main"}
               DOPPLER_TOKEN: secrets.DOPPLER_TOKEN_PRD
 ```
 
@@ -167,8 +169,13 @@ instead of a tag. `concurrency: stg-integration-tests` is set with
   release-please. See [doppler-architecture.md](doppler-architecture.md).
 - **GHCR** (`ghcr.io/ailianbr/monk-api`) hosts the images; pushes authenticate
   with the auto-provided `GITHUB_TOKEN`.
-- **Dockploy** runs the staging (`stg`) and production (`prd`) stacks and pulls
-  new images when the `DOCKPLOY_WEBHOOK` is hit. The in-repo
+- **Dockploy** runs the staging (`stg`) and production (`prd`) stacks. After building
+  the image, CI triggers a redeploy by POSTing the per-compose `DOCKPLOY_WEBHOOK`
+  (Dokploy's git-provider push endpoint) with an `X-GitHub-Event: push` header and a
+  `{"ref":"refs/heads/<branch>"}` body matching the compose's branch — the deploy runs
+  `docker compose up` with `pull_policy: always`, so it re-pulls the freshly-built
+  `:stg`/`:latest`. (A bare GET/POST returns `Branch Not Match` and does nothing.) The
+  webhook is a per-compose deploy token — no panel-wide API key in CI. The in-repo
   `docker-compose.stg.yml` / `docker-compose.prd.yml` describe those stacks.
 
 ---
