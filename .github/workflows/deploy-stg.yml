@@ -79,7 +79,12 @@ jobs:
       - name: Install Doppler CLI
         uses: dopplerhq/cli-action@v3
 
-      - name: Redeploy Dockploy staging environment
-        run: doppler run -- sh -c 'curl -s -X GET "$DOCKPLOY_WEBHOOK"'
+      # Dokploy's compose deploy webhook is the git-provider push endpoint: it needs
+      # the X-GitHub-Event header + a {"ref": "refs/heads/<branch>"} body matching the
+      # compose's branch, and follows a 301 (-L). A bare GET/POST returns "Branch Not
+      # Match" and deploys nothing. -f makes a non-2xx fail the job.
+      - name: Redeploy staging (Dokploy deploy webhook)
+        run: |
+          doppler run -- sh -c 'curl -fsSL -X POST -H "X-GitHub-Event: push" -H "content-type: application/json" -d "{\"ref\":\"refs/heads/development\"}" "$DOCKPLOY_WEBHOOK"'
         env:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN_STG }}

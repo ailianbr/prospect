@@ -10,3 +10,4 @@ def test_health(client):
     body = response.json()
     assert body['status'] == 'ok'
     assert body['version']
+    assert body['environment']
