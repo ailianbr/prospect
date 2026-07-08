@@ -39,7 +39,7 @@ async def scalar_docs():
 @app.get('/health')
 async def health():
     """Unauthenticated liveness/version probe for uptime checks and deploy verification."""
-    return {'status': 'ok', 'version': version('listmonk'), 'environment': settings.env}
+    return {'status': 'ok', 'service': 'monk-api', 'version': version('listmonk'), 'environment': settings.env}
 
 
 @app.exception_handler(Exception)
