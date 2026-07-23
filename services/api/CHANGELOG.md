@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.1](https://github.com/ailianbr/prospect/compare/monk-api-v0.9.0...monk-api-v0.9.1) (2026-07-23)
+
+
+### Bug Fixes
+
+* **api:** carry subscriber attribs through JSON bulk import ([05bbade](https://github.com/ailianbr/prospect/commit/05bbadee57a05b183a2e76edb87956ba458aa664))
+* **api:** carry subscriber attribs through JSON bulk import ([accfa7a](https://github.com/ailianbr/prospect/commit/accfa7aeeedba2dd73e04efa3ba05d01832914f6))
+* **api:** surface Listmonk errors from create_list instead of masking as 401 ([1b1c124](https://github.com/ailianbr/prospect/commit/1b1c1241018b5f209c9703b59c6d3f00a3ba8089))
+
 ## [0.9.0](https://github.com/ailianbr/prospect/compare/monk-api-v0.8.0...monk-api-v0.9.0) (2026-07-08)
 
 
