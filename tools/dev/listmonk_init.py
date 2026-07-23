@@ -2,9 +2,11 @@
 """Dev one-shot: provision a Listmonk API user and write its creds to .env.local.
 
 Listmonk (v6) issues an API user's token exactly once — at creation — so there is
-no way to "read it back" on a later run. This deletes any existing API user and
-recreates it to mint a fresh token each `up`, then writes LISTMONK_USER /
-LISTMONK_TOKEN to the env file the dev `api` container loads (`env_file: .env.local`).
+no way to "read it back" on a later run. To avoid revoking the token the running
+`api` container still holds, this is idempotent: if the env file already has creds
+that still authenticate, it reuses them untouched. Only when they are missing or
+invalid does it delete + recreate the API user to mint a fresh token, then write
+LISTMONK_USER / LISTMONK_TOKEN to the env file the `api` container loads.
 
 This is prospect's analogue of conectai's `.env.full` pattern: a seed step that
 discovers a value the app needs at runtime and hands it over via an env file.
@@ -20,6 +22,7 @@ Stdlib only (runs in a bare python:alpine container). Reads:
   ENV_LOCAL_PATH            env file to write (default /repo/.env.local)
 """
 
+import base64
 import http.cookiejar
 import json
 import os
@@ -60,7 +63,37 @@ def _super_admin_role_id() -> int:
     return 1  # install default
 
 
+def _read_existing_creds() -> tuple[str, str] | None:
+    """Return (user, token) already written to the env file, or None if absent/incomplete."""
+    try:
+        with open(ENV_LOCAL_PATH) as fh:
+            kv = dict(ln.strip().split('=', 1) for ln in fh if '=' in ln and not ln.startswith('#'))
+    except OSError:
+        return None
+    user, token = kv.get('LISTMONK_USER'), kv.get('LISTMONK_TOKEN')
+    return (user, token) if user and token else None
+
+
+def _creds_still_valid(user: str, token: str) -> bool:
+    """True if (user, token) still authenticate — the same HTTP Basic scheme the app uses."""
+    cred = base64.b64encode(f'{user}:{token}'.encode()).decode()
+    req = urllib.request.Request(f'{LM}/api/lists?per_page=1', headers={'Authorization': f'Basic {cred}'})
+    try:
+        with urllib.request.urlopen(req, timeout=15):
+            return True
+    except (urllib.error.HTTPError, urllib.error.URLError):
+        return False
+
+
 def main() -> None:
+    # Idempotent: if the previously-seeded token still authenticates, keep it. Re-minting
+    # (delete + recreate) revokes the token the running `api` container still holds, which
+    # 403s every Listmonk call until the api is restarted.
+    existing = _read_existing_creds()
+    if existing and _creds_still_valid(*existing):
+        print(f'listmonk-init: existing token for {existing[0]} still valid -> reuse (no re-mint)')
+        return
+
     # /admin/login 302-redirects on success; the opener follows it and keeps the cookie.
     _open('POST', '/admin/login', form={'username': ADMIN_USER, 'password': ADMIN_PASSWORD})
 
