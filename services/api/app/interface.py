@@ -407,13 +407,21 @@ class Interface:
 
         return int(default_list)
 
-    def _post_csv_to_listmonk(self, client: ClientSchema, file_bytes: bytes, filename: str, target_list: int) -> dict:
-        """Sends a CSV file to Listmonk's bulk import endpoint."""
+    def _post_csv_to_listmonk(
+        self, client: ClientSchema, file_bytes: bytes, filename: str, target_list: int, overwrite: bool = False
+    ) -> dict:
+        """Sends a CSV file to Listmonk's bulk import endpoint.
+
+        `overwrite=True` makes Listmonk update an existing subscriber's name/attribs; without
+        it Listmonk skips subscribers that already exist, so their attribs (e.g. `phone`) can
+        only be fixed via PUT. Opt-in per import so a routine re-import never clobbers data.
+        """
         params = json.dumps({
             'mode': 'subscribe',
             'subscription_status': 'confirmed',
             'lists': [target_list],
             'delim': ',',
+            'overwrite': overwrite,
         })
         try:
             response = self.__monk_subscribers.post_multipart(
@@ -426,19 +434,22 @@ class Interface:
         self._raise_for_listmonk(response)
         return response.json()
 
-    def import_subscribers(self, client: ClientSchema, file_bytes: bytes, filename: str, list_id: Optional[int] = None) -> dict:
+    def import_subscribers(
+        self, client: ClientSchema, file_bytes: bytes, filename: str, list_id: Optional[int] = None, overwrite: bool = False
+    ) -> dict:
         target_list = self._resolve_target_list(client, list_id)
-        result = self._post_csv_to_listmonk(client, file_bytes, filename, target_list)
+        result = self._post_csv_to_listmonk(client, file_bytes, filename, target_list, overwrite)
         enrich_wide_event({
             'operation': 'import_subscribers',
             'client_id': client.id,
             'target_list': target_list,
             'file': filename,
+            'overwrite': overwrite,
         })
         return result
 
     def import_subscribers_json(
-        self, client: ClientSchema, items: list[ImportSubscriberItem], list_id: Optional[int] = None
+        self, client: ClientSchema, items: list[ImportSubscriberItem], list_id: Optional[int] = None, overwrite: bool = False
     ) -> dict:
         target_list = self._resolve_target_list(client, list_id)
 
@@ -452,12 +463,13 @@ class Interface:
             writer.writerow({'email': item.email, 'name': item.name, 'attributes': json.dumps(item.attribs or {})})
         file_bytes = buf.getvalue().encode()
 
-        result = self._post_csv_to_listmonk(client, file_bytes, 'import.csv', target_list)
+        result = self._post_csv_to_listmonk(client, file_bytes, 'import.csv', target_list, overwrite)
         enrich_wide_event({
             'operation': 'import_subscribers_json',
             'client_id': client.id,
             'target_list': target_list,
             'count': len(items),
+            'overwrite': overwrite,
         })
         return result
 

@@ -35,10 +35,16 @@ ListSubscribersQuery = Annotated[_ListSubscribersQuery, Depends()]
 
 
 @router.post('/import', status_code=HTTPStatus.OK)
-async def import_subscribers(file: UploadFile, api: Api, x_instance_id: InstanceID, list_id: Optional[int] = None):
-    """Upload a CSV of subscribers and enroll them in the specified list (or the client's default list)."""
+async def import_subscribers(
+    file: UploadFile, api: Api, x_instance_id: InstanceID, list_id: Optional[int] = None, overwrite: bool = False
+):
+    """Upload a CSV of subscribers and enroll them in the specified list (or the client's default list).
+
+    `overwrite=true` updates subscribers that already exist (name/attribs); by default existing
+    subscribers are left untouched and only new ones are created.
+    """
     content = await file.read()
-    return api.import_subscribers(ClientSchema(id=x_instance_id), content, file.filename, list_id)
+    return api.import_subscribers(ClientSchema(id=x_instance_id), content, file.filename, list_id, overwrite)
 
 
 @router.post('/import/json', status_code=HTTPStatus.OK)
@@ -47,9 +53,14 @@ def import_subscribers_json(
     api: Api,
     x_instance_id: InstanceID,
     list_id: Optional[int] = None,
+    overwrite: bool = False,
 ):
-    """Upload a JSON array of subscribers and enroll them in the specified list (or the client's default list)."""
-    return api.import_subscribers_json(ClientSchema(id=x_instance_id), body, list_id)
+    """Upload a JSON array of subscribers and enroll them in the specified list (or the client's default list).
+
+    `overwrite=true` updates subscribers that already exist (name/attribs); by default existing
+    subscribers are left untouched and only new ones are created.
+    """
+    return api.import_subscribers_json(ClientSchema(id=x_instance_id), body, list_id, overwrite)
 
 
 @router.get('', response_model=ResponseSubscribersSchema)
