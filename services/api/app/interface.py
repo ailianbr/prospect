@@ -162,6 +162,7 @@ class Interface:
                 status_code=HTTPStatus.SERVICE_UNAVAILABLE,
                 detail=f'Could not reach Listmonk API: {e}',
             )
+        self._raise_for_listmonk(response)
         result = response.json()
         list_id = result['data']['id']
 
