@@ -1,9 +1,11 @@
+import csv
 import io
+import json
 from http import HTTPStatus
 
 import pytest
 
-from app.interface import interface
+from app.interface import Interface, interface
 from app.schemas import (
     ClientSchema,
     CreateListSchema,
@@ -124,6 +126,30 @@ def test_json_import_auto_creates_client_and_default_list(client, cleanup_new_cl
     assert response.status_code == HTTPStatus.OK
     info = interface.get_client(ClientSchema(id=NEW_CLIENT))
     assert info.default_list is not None
+
+
+def test_json_import_carries_attribs_to_listmonk(client, created_list, monkeypatch):
+    """JSON import forwards per-subscriber attribs (e.g. the WhatsApp `phone`) to Listmonk
+    as the CSV `attributes` column instead of dropping them."""
+    captured: dict = {}
+
+    def fake_post_csv(self, client_arg, file_bytes, filename, target_list):
+        captured['bytes'] = file_bytes
+        return {'data': True}
+
+    monkeypatch.setattr(Interface, '_post_csv_to_listmonk', fake_post_csv)
+
+    response = client.post(
+        f'/v1/subscriber/import/json?list_id={created_list["id"]}',
+        json=[{'email': TEST_EMAIL, 'name': 'Test User', 'attribs': {'phone': '+5541999999999'}}],
+        headers=MXF,
+    )
+    assert response.status_code == HTTPStatus.OK
+
+    rows = list(csv.DictReader(io.StringIO(captured['bytes'].decode())))
+    assert rows
+    assert 'attributes' in rows[0]
+    assert json.loads(rows[0]['attributes']) == {'phone': '+5541999999999'}
 
 
 # =============================================================================
