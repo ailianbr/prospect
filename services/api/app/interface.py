@@ -441,11 +441,14 @@ class Interface:
     ) -> dict:
         target_list = self._resolve_target_list(client, list_id)
 
+        # Listmonk's CSV import reads per-subscriber attributes from an `attributes`
+        # column containing a JSON object; carry `attribs` through so callers can set
+        # fields the messenger handlers need (e.g. the WhatsApp `phone` attribute).
         buf = io.StringIO()
-        writer = csv.DictWriter(buf, fieldnames=['email', 'name'])
+        writer = csv.DictWriter(buf, fieldnames=['email', 'name', 'attributes'])
         writer.writeheader()
         for item in items:
-            writer.writerow({'email': item.email, 'name': item.name})
+            writer.writerow({'email': item.email, 'name': item.name, 'attributes': json.dumps(item.attribs or {})})
         file_bytes = buf.getvalue().encode()
 
         result = self._post_csv_to_listmonk(client, file_bytes, 'import.csv', target_list)
