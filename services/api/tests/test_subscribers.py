@@ -133,8 +133,10 @@ def test_json_import_carries_attribs_to_listmonk(client, created_list, monkeypat
     as the CSV `attributes` column instead of dropping them."""
     captured: dict = {}
 
-    def fake_post_csv(self, client_arg, file_bytes, filename, target_list):
-        captured['bytes'] = file_bytes
+    def fake_post_csv(self, *args):
+        # mirrors _post_csv_to_listmonk(client, file_bytes, filename, target_list, overwrite)
+        captured['bytes'] = args[1]
+        captured['overwrite'] = args[4]
         return {'data': True}
 
     monkeypatch.setattr(Interface, '_post_csv_to_listmonk', fake_post_csv)
@@ -150,6 +152,7 @@ def test_json_import_carries_attribs_to_listmonk(client, created_list, monkeypat
     assert rows
     assert 'attributes' in rows[0]
     assert json.loads(rows[0]['attributes']) == {'phone': '+5541999999999'}
+    assert captured['overwrite'] is False  # default: create-only, never clobber existing
 
 
 # =============================================================================
