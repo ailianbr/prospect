@@ -181,15 +181,11 @@ class ChatwootHandler(MessengerHandlerBase):
             return None
         return resp.json().get('id')
 
-    def _create_conversation(self, session: requests.Session, config: dict, contact_id: int, source_id: str) -> int | None:
-        """Create (or reuse) the WhatsApp conversation for this contact. `source_id` is the wa_id
-        (phone digits, no `+`) — passing it puts the conversation on the same contact-inbox that
-        inbound replies use, so a campaign message and the customer's reply thread together instead
-        of splitting into separate conversations."""
+    def _create_conversation(self, session: requests.Session, config: dict, contact_id: int) -> int | None:
         base = f'{config["url"].rstrip("/")}/api/v1/accounts/{config["account_id"]}'
         resp = session.post(
             f'{base}/conversations',
-            json={'inbox_id': config['inbox_id'], 'contact_id': contact_id, 'source_id': source_id},
+            json={'inbox_id': config['inbox_id'], 'contact_id': contact_id},
             headers=self._headers(config['api_token_handler']),
             timeout=10,
         )
@@ -205,17 +201,20 @@ class ChatwootHandler(MessengerHandlerBase):
         base = f'{config["url"].rstrip("/")}/api/v1/accounts/{config["account_id"]}'
         headers = self._headers(config['api_token_handler'])
         for label in labels:
-            resp = session.post(
-                f'{base}/labels',
-                json={'title': label, 'color': _LABEL_COLOR},
-                headers=headers,
-                timeout=10,
-            )
-            if not resp.ok and resp.status_code != HTTPStatus.UNPROCESSABLE_ENTITY:
-                logger.warning(
-                    'chatwoot.label_create_failed',
-                    extra={'status': resp.status_code, 'body': resp.text[:300], 'label': label},
+            try:
+                resp = session.post(
+                    f'{base}/labels',
+                    json={'title': label, 'color': _LABEL_COLOR},
+                    headers=headers,
+                    timeout=10,
                 )
+                if not resp.ok and resp.status_code != HTTPStatus.UNPROCESSABLE_ENTITY:
+                    logger.warning(
+                        'chatwoot.label_create_failed',
+                        extra={'status': resp.status_code, 'body': resp.text[:300], 'label': label},
+                    )
+            except requests.RequestException as e:
+                logger.warning('chatwoot.label_create_failed', extra={'error': str(e), 'label': label})
 
     def _add_conversation_labels(
         self, session: requests.Session, config: dict, conversation_id: int, labels: list[str]
@@ -225,12 +224,16 @@ class ChatwootHandler(MessengerHandlerBase):
         if not labels:
             return True
         base = f'{config["url"].rstrip("/")}/api/v1/accounts/{config["account_id"]}'
-        resp = session.post(
-            f'{base}/conversations/{conversation_id}/labels',
-            json={'labels': labels},
-            headers=self._headers(config['api_token_handler']),
-            timeout=10,
-        )
+        try:
+            resp = session.post(
+                f'{base}/conversations/{conversation_id}/labels',
+                json={'labels': labels},
+                headers=self._headers(config['api_token_handler']),
+                timeout=10,
+            )
+        except requests.RequestException as e:
+            logger.warning('chatwoot.label_failed', extra={'error': str(e), 'labels': labels})
+            return False
         if not resp.ok:
             logger.warning(
                 'chatwoot.label_failed',
@@ -327,8 +330,7 @@ class ChatwootHandler(MessengerHandlerBase):
         if contact_id is None:
             return False
 
-        wa_id = re.sub(r'\D', '', str(phone))  # WhatsApp id = phone digits only (no '+')
-        conversation_id = self._create_conversation(session, ctx.config, contact_id, wa_id)
+        conversation_id = self._create_conversation(session, ctx.config, contact_id)
         if conversation_id is None:
             return False
 
@@ -397,8 +399,16 @@ class ChatwootHandler(MessengerHandlerBase):
         # per-recipient fan-out just assigns them to each conversation.
         self._ensure_labels(session, config, _campaign_labels(payload))
 
+        def _safe_process(recipient: MessengerRecipient) -> bool:
+            # Never let one recipient's unexpected error abort the batch or vanish silently.
+            try:
+                return self._process_one(recipient, ctx, session)
+            except Exception:
+                logger.exception('chatwoot.recipient_error', extra={'uuid': recipient.uuid, 'campaign': payload.campaign.name})
+                return False
+
         with ThreadPoolExecutor(max_workers=10) as pool:
-            results = list(pool.map(lambda r: self._process_one(r, ctx, session), payload.recipients))
+            results = list(pool.map(_safe_process, payload.recipients))
 
         sent_count = sum(1 for r in results if r)
         skipped_count = sum(1 for r in results if not r)
