@@ -123,8 +123,8 @@ def test_full_flow_reads_pb_config(handler, integration_payload, chatwoot_sessio
     with patch('app.handlers.chatwoot.handler.requests.Session', return_value=chatwoot_session):
         handler._process_all(integration_payload)
 
-    # the full flow ran: one contact search + a template message POST
-    assert chatwoot_session.get.call_count == 1
+    # the full flow ran: a contact search + a template message POST (a template-fetch GET also happens)
+    assert any(c.args[0].endswith('/contacts/search') for c in chatwoot_session.get.call_args_list)
     assert any(c.args[0].endswith('/messages') for c in chatwoot_session.post.call_args_list)
 
 
@@ -172,7 +172,7 @@ def test_instancia_fallback_default_used(handler, chatwoot_session):
 
 
 def test_recipient_missing_phone_skipped(handler, chatwoot_session):
-    """A recipient without attribs.phone must be skipped — zero Chatwoot calls."""
+    """A recipient without attribs.phone must be skipped — no per-recipient Chatwoot calls."""
     payload = MessengerPayload(
         subject='No phone',
         body=TEMPLATE_BODY,
@@ -184,8 +184,9 @@ def test_recipient_missing_phone_skipped(handler, chatwoot_session):
     with patch('app.handlers.chatwoot.handler.requests.Session', return_value=chatwoot_session):
         handler._process_all(payload)
 
-    chatwoot_session.get.assert_not_called()
-    # recipient skipped before send — no message POST (a label-ensure POST may still occur)
+    # recipient skipped before send — no contact search or message
+    # (campaign-level template-fetch GET /inboxes and label POSTs may still occur)
+    assert not any(c.args[0].endswith('/contacts/search') for c in chatwoot_session.get.call_args_list)
     assert not any(c.args[0].endswith('/messages') for c in chatwoot_session.post.call_args_list)
 
 
