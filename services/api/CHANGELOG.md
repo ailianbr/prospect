@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.11.0](https://github.com/ailianbr/prospect/compare/monk-api-v0.10.1...monk-api-v0.11.0) (2026-07-24)
+
+
+### Features
+
+* **api:** render WhatsApp template content into the Chatwoot message ([2e98ea1](https://github.com/ailianbr/prospect/commit/2e98ea175a579570a2ff2973d7d849737c3ab831))
+* message content rendering to main (0.11.0) ([68ec8bd](https://github.com/ailianbr/prospect/commit/68ec8bd898f630ce743448c0c430ed79a3b15544))
+* render WhatsApp template content into the Chatwoot message ([2cd4bf9](https://github.com/ailianbr/prospect/commit/2cd4bf9115fe25ae303caab93602475c935b377b))
+
 ## [0.10.1](https://github.com/ailianbr/prospect/compare/monk-api-v0.10.0...monk-api-v0.10.1) (2026-07-24)
 
 
