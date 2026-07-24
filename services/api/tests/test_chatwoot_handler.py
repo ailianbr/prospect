@@ -461,3 +461,15 @@ def test_ensure_labels_creates_account_labels_idempotently(handler):
     assert session.post.call_count == len(labels)
     assert all(c.args[0].endswith('/labels') for c in session.post.call_args_list)
     assert [c.kwargs['json']['title'] for c in session.post.call_args_list] == labels
+
+
+def test_process_one_creates_conversation_with_wa_id_source(handler, recipient, ctx):
+    """Conversation is created with source_id = the wa_id (phone digits) so campaign messages
+    thread with inbound replies instead of splitting to a separate conversation."""
+    session = _make_http_session(contact_id=42, conversation_id=99)
+
+    handler._process_one(recipient, ctx, session)
+
+    conv_calls = [c for c in session.post.call_args_list if c.args and c.args[0].endswith('/conversations')]
+    assert conv_calls, 'expected a POST to create the conversation'
+    assert conv_calls[0].kwargs['json']['source_id'] == '5511999999999'  # from recipient attribs +5511999999999

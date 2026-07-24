@@ -181,11 +181,15 @@ class ChatwootHandler(MessengerHandlerBase):
             return None
         return resp.json().get('id')
 
-    def _create_conversation(self, session: requests.Session, config: dict, contact_id: int) -> int | None:
+    def _create_conversation(self, session: requests.Session, config: dict, contact_id: int, source_id: str) -> int | None:
+        """Create (or reuse) the WhatsApp conversation for this contact. `source_id` is the wa_id
+        (phone digits, no `+`) — passing it puts the conversation on the same contact-inbox that
+        inbound replies use, so a campaign message and the customer's reply thread together instead
+        of splitting into separate conversations."""
         base = f'{config["url"].rstrip("/")}/api/v1/accounts/{config["account_id"]}'
         resp = session.post(
             f'{base}/conversations',
-            json={'inbox_id': config['inbox_id'], 'contact_id': contact_id},
+            json={'inbox_id': config['inbox_id'], 'contact_id': contact_id, 'source_id': source_id},
             headers=self._headers(config['api_token_handler']),
             timeout=10,
         )
@@ -323,7 +327,8 @@ class ChatwootHandler(MessengerHandlerBase):
         if contact_id is None:
             return False
 
-        conversation_id = self._create_conversation(session, ctx.config, contact_id)
+        wa_id = re.sub(r'\D', '', str(phone))  # WhatsApp id = phone digits only (no '+')
+        conversation_id = self._create_conversation(session, ctx.config, contact_id, wa_id)
         if conversation_id is None:
             return False
 
