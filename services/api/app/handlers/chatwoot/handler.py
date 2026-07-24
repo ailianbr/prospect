@@ -1,6 +1,9 @@
 import logging
+import re
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from http import HTTPStatus
 from threading import Thread
 from typing import override
 
@@ -19,6 +22,32 @@ logger = logging.getLogger(__name__)
 # Note: Chatwoot restricts bot tokens from contact endpoints; user token required for handler
 _HANDLER_TOKEN_KEY = 'api_access_token_user'
 _TEMPLATES_TOKEN_KEY = 'api_access_token_user'
+
+# Neutral color for auto-created campaign labels (Chatwoot requires a color on create).
+_LABEL_COLOR = '#8c9dad'
+
+
+def _slug(text: str) -> str:
+    """Normalize text into a Chatwoot label: strip accents, lowercase, non-alphanumeric -> `_`."""
+    ascii_text = unicodedata.normalize('NFKD', text or '').encode('ascii', 'ignore').decode()
+    return re.sub(r'[^a-z0-9]+', '_', ascii_text.lower()).strip('_')
+
+
+def _campaign_labels(payload: MessengerPayload) -> list[str]:
+    """Chatwoot labels for a campaign's conversations: `campanha_<name>` plus the campaign's
+    front-set tags (the internal `instance:<id>` tag excluded). Deduped, order-stable."""
+    labels: list[str] = []
+    name = _slug(payload.campaign.name)
+    if name:
+        labels.append(f'campanha_{name}')
+    for tag in payload.campaign.tags or []:
+        if tag.startswith('instance:'):
+            continue
+        slug = _slug(tag)
+        if slug:
+            labels.append(slug)
+    seen: set[str] = set()
+    return [x for x in labels if not (x in seen or seen.add(x))]
 
 
 def fetch_chatwoot_config(pb, instance_id: str, handler: str, channel: str) -> dict | None:
@@ -152,11 +181,15 @@ class ChatwootHandler(MessengerHandlerBase):
             return None
         return resp.json().get('id')
 
-    def _create_conversation(self, session: requests.Session, config: dict, contact_id: int) -> int | None:
+    def _create_conversation(self, session: requests.Session, config: dict, contact_id: int, source_id: str) -> int | None:
+        """Create (or reuse) the WhatsApp conversation for this contact. `source_id` is the wa_id
+        (phone digits, no `+`) — passing it puts the conversation on the same contact-inbox that
+        inbound replies use, so a campaign message and the customer's reply thread together instead
+        of splitting into separate conversations."""
         base = f'{config["url"].rstrip("/")}/api/v1/accounts/{config["account_id"]}'
         resp = session.post(
             f'{base}/conversations',
-            json={'inbox_id': config['inbox_id'], 'contact_id': contact_id},
+            json={'inbox_id': config['inbox_id'], 'contact_id': contact_id, 'source_id': source_id},
             headers=self._headers(config['api_token_handler']),
             timeout=10,
         )
@@ -164,6 +197,46 @@ class ChatwootHandler(MessengerHandlerBase):
             logger.error('chatwoot.create_conversation_failed', extra={'status': resp.status_code, 'body': resp.text[:500]})
             return None
         return resp.json().get('id')
+
+    def _ensure_labels(self, session: requests.Session, config: dict, labels: list[str]) -> None:
+        """Create each label as an account Label so it is filterable in Chatwoot (a conversation-only
+        tag is not). Idempotent: Chatwoot returns 422 'already taken' for existing labels, treated as
+        success. Called once per campaign; non-fatal."""
+        base = f'{config["url"].rstrip("/")}/api/v1/accounts/{config["account_id"]}'
+        headers = self._headers(config['api_token_handler'])
+        for label in labels:
+            resp = session.post(
+                f'{base}/labels',
+                json={'title': label, 'color': _LABEL_COLOR},
+                headers=headers,
+                timeout=10,
+            )
+            if not resp.ok and resp.status_code != HTTPStatus.UNPROCESSABLE_ENTITY:
+                logger.warning(
+                    'chatwoot.label_create_failed',
+                    extra={'status': resp.status_code, 'body': resp.text[:300], 'label': label},
+                )
+
+    def _add_conversation_labels(
+        self, session: requests.Session, config: dict, conversation_id: int, labels: list[str]
+    ) -> bool:
+        """Tag the conversation so campaigns are filterable in Chatwoot. Non-fatal: a failure is
+        logged and never blocks the send."""
+        if not labels:
+            return True
+        base = f'{config["url"].rstrip("/")}/api/v1/accounts/{config["account_id"]}'
+        resp = session.post(
+            f'{base}/conversations/{conversation_id}/labels',
+            json={'labels': labels},
+            headers=self._headers(config['api_token_handler']),
+            timeout=10,
+        )
+        if not resp.ok:
+            logger.warning(
+                'chatwoot.label_failed',
+                extra={'status': resp.status_code, 'body': resp.text[:500], 'labels': labels},
+            )
+        return resp.ok
 
     @staticmethod
     def _build_message_body(template, resolved_body: dict, resolved_buttons: list) -> dict:
@@ -254,9 +327,12 @@ class ChatwootHandler(MessengerHandlerBase):
         if contact_id is None:
             return False
 
-        conversation_id = self._create_conversation(session, ctx.config, contact_id)
+        wa_id = re.sub(r'\D', '', str(phone))  # WhatsApp id = phone digits only (no '+')
+        conversation_id = self._create_conversation(session, ctx.config, contact_id, wa_id)
         if conversation_id is None:
             return False
+
+        self._add_conversation_labels(session, ctx.config, conversation_id, _campaign_labels(ctx.payload))
 
         message_body = self._build_message_body(ctx.template, resolved_body, resolved_buttons)
         if not self._send_template_message(session, ctx.config, conversation_id, message_body):
@@ -317,6 +393,9 @@ class ChatwootHandler(MessengerHandlerBase):
             instancia=self._fetch_instancia(pb, instance_id),
         )
         session = requests.Session()
+        # Register the campaign labels as account Labels once (so they're filterable), then the
+        # per-recipient fan-out just assigns them to each conversation.
+        self._ensure_labels(session, config, _campaign_labels(payload))
 
         with ThreadPoolExecutor(max_workers=10) as pool:
             results = list(pool.map(lambda r: self._process_one(r, ctx, session), payload.recipients))

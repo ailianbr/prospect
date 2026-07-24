@@ -6,14 +6,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.handlers.chatwoot.handler import CampaignCtx, ChatwootHandler
+from app.handlers.chatwoot.handler import CampaignCtx, ChatwootHandler, _campaign_labels, _slug  # noqa: PLC2701
 from app.handlers.chatwoot.schemas import ChatwootCampaignBody, ChatwootTemplateConfig
 from app.handlers.resolver import DefaultVariableResolver
 from app.schemas import MessengerCampaignMeta, MessengerPayload, MessengerRecipient
 
 # --- constants for call counts ---
-CHATWOOT_CALLS_NEW_CONTACT = 3  # contact_create + conversation + message
-CHATWOOT_CALLS_EXIST_CONTACT = 2  # conversation + message (contact found in search)
+CHATWOOT_CALLS_NEW_CONTACT = 4  # contact_create + conversation + labels + message
+CHATWOOT_CALLS_EXIST_CONTACT = 3  # conversation + labels + message (contact found in search)
+CHATWOOT_CALLS_CONVERSATION_FAILED = 2  # contact create + failed conversation (stops before labels)
 
 # --------------------------------------------------------------------------- #
 # Shared test data
@@ -115,8 +116,9 @@ def _make_http_session(contact_id=42, conversation_id=99, contact_exists=False):
     create_contact.json.return_value = {'id': contact_id}
     create_conv = MagicMock(ok=True)
     create_conv.json.return_value = {'id': conversation_id}
+    labels_resp = MagicMock(ok=True)
     send_msg = MagicMock(ok=True)
-    session.post.side_effect = [create_contact, create_conv, send_msg]
+    session.post.side_effect = [create_contact, create_conv, labels_resp, send_msg]
 
     return session
 
@@ -217,7 +219,7 @@ def test_process_one_skips_when_conversation_fails(handler, recipient, ctx):
     result = handler._process_one(recipient, ctx, session)
 
     assert result is False
-    assert session.post.call_count == CHATWOOT_CALLS_EXIST_CONTACT
+    assert session.post.call_count == CHATWOOT_CALLS_CONVERSATION_FAILED
 
 
 # --------------------------------------------------------------------------- #
@@ -232,6 +234,7 @@ def test_process_all_sends_to_chatwoot(handler, payload, mock_pb):
         patch('app.handlers.chatwoot.handler.get_pocketbase_session', return_value=mock_pb),
         patch('app.handlers.chatwoot.handler.fetch_chatwoot_config', return_value=CHATWOOT_CONFIG),
         patch('app.handlers.chatwoot.handler.requests.Session', return_value=session),
+        patch.object(ChatwootHandler, '_ensure_labels'),
     ):
         handler._process_all(payload)
 
@@ -305,6 +308,7 @@ def test_process_all_one_failure_does_not_abort_others(handler, mock_pb):
         patch('app.handlers.chatwoot.handler.get_pocketbase_session', return_value=mock_pb),
         patch('app.handlers.chatwoot.handler.fetch_chatwoot_config', return_value=CHATWOOT_CONFIG),
         patch('app.handlers.chatwoot.handler.requests.Session', return_value=session),
+        patch.object(ChatwootHandler, '_ensure_labels'),
     ):
         handler._process_all(multi_payload)
 
@@ -396,3 +400,76 @@ def test_chatwoot_e2e_sends_via_messenger(client):
     assert response.status_code == HTTPStatus.OK
     assert 'error' not in captured, f'Handler reported error: {captured}'
     assert captured.get('recipients_sent') == 1
+
+
+# --------------------------------------------------------------------------- #
+# Campaign labels
+# --------------------------------------------------------------------------- #
+
+
+def test_slug_strips_accents_and_specials():
+    assert _slug('Cobrança Nov') == 'cobranca_nov'
+    assert _slug('Black Friday 2026!') == 'black_friday_2026'
+    assert _slug('  --VIP--  ') == 'vip'
+    assert not _slug('')
+
+
+def test_campaign_labels_name_plus_tags_drops_instance_and_dedups():
+    payload = MessengerPayload(
+        subject='S',
+        body=TEMPLATE_BODY,
+        content_type='plain',
+        campaign=MessengerCampaignMeta(uuid='c', name='Teste 23', tags=['vip', 'instance:mxf', 'vip']),
+        recipients=[],
+    )
+    assert _campaign_labels(payload) == ['campanha_teste_23', 'vip']
+
+
+def test_process_one_tags_conversation_with_campaign_labels(handler, recipient, ctx):
+    session = _make_http_session(contact_id=42, conversation_id=99)
+
+    handler._process_one(recipient, ctx, session)
+
+    label_calls = [c for c in session.post.call_args_list if c.args and c.args[0].endswith('/conversations/99/labels')]
+    assert label_calls, 'expected a POST to the conversation labels endpoint'
+    assert label_calls[0].kwargs['json'] == {'labels': ['campanha_cobranca_nov', 'cobranca']}
+
+
+def test_process_one_label_failure_is_non_fatal(handler, recipient, ctx):
+    session = _make_http_session(contact_id=42, conversation_id=99)
+    create_contact = MagicMock(ok=True, json=lambda: {'id': 42})
+    create_conv = MagicMock(ok=True, json=lambda: {'id': 99})
+    labels_fail = MagicMock(ok=False, status_code=422, text='nope')
+    send_msg = MagicMock(ok=True)
+    session.post.side_effect = [create_contact, create_conv, labels_fail, send_msg]
+
+    result = handler._process_one(recipient, ctx, session)
+
+    assert result is True  # a labels failure must not block the message send
+    assert session.post.call_count == CHATWOOT_CALLS_NEW_CONTACT
+
+
+def test_ensure_labels_creates_account_labels_idempotently(handler):
+    session = MagicMock()
+    created = MagicMock(ok=True)
+    already = MagicMock(ok=False, status_code=HTTPStatus.UNPROCESSABLE_ENTITY, text='taken')  # existing -> tolerated
+    session.post.side_effect = [created, already]
+    labels = ['campanha_x', 'vip']
+
+    handler._ensure_labels(session, CHATWOOT_CONFIG, labels)
+
+    assert session.post.call_count == len(labels)
+    assert all(c.args[0].endswith('/labels') for c in session.post.call_args_list)
+    assert [c.kwargs['json']['title'] for c in session.post.call_args_list] == labels
+
+
+def test_process_one_creates_conversation_with_wa_id_source(handler, recipient, ctx):
+    """Conversation is created with source_id = the wa_id (phone digits) so campaign messages
+    thread with inbound replies instead of splitting to a separate conversation."""
+    session = _make_http_session(contact_id=42, conversation_id=99)
+
+    handler._process_one(recipient, ctx, session)
+
+    conv_calls = [c for c in session.post.call_args_list if c.args and c.args[0].endswith('/conversations')]
+    assert conv_calls, 'expected a POST to create the conversation'
+    assert conv_calls[0].kwargs['json']['source_id'] == '5511999999999'  # from recipient attribs +5511999999999
