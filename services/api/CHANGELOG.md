@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.1](https://github.com/ailianbr/prospect/compare/monk-api-v0.10.0...monk-api-v0.10.1) (2026-07-24)
+
+
+### Bug Fixes
+
+* **api:** revert conversation source_id (broke prod sends) + harden label/recipient handling ([177fa9e](https://github.com/ailianbr/prospect/commit/177fa9e9344bcb1ab34eaf5b48d11681b6ceda24))
+* revert conversation source_id (restore WhatsApp sends) + harden handler ([df1b65c](https://github.com/ailianbr/prospect/commit/df1b65c1c4f247fd801aa014472f3ec69ee2d28a))
+* revert source_id hotfix to main (0.10.1) ([389079a](https://github.com/ailianbr/prospect/commit/389079a62df0cab72e85b3b81c81f647f7be9ea2))
+
 ## [0.10.0](https://github.com/ailianbr/prospect/compare/monk-api-v0.9.1...monk-api-v0.10.0) (2026-07-24)
 
 
