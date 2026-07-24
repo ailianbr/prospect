@@ -50,6 +50,24 @@ def _campaign_labels(payload: MessengerPayload) -> list[str]:
     return [x for x in labels if not (x in seen or seen.add(x))]
 
 
+def _render_content(body_text: str, resolved_body: dict[str, str]) -> str:
+    """Fill a WhatsApp template's BODY text (`Oi, {{1}}! ...`) with the resolved values so the
+    outgoing Chatwoot message shows real text — `create_campaign` clears the content before Listmonk
+    (the `{{n}}` would break its Go-template compiler), so we render it here for display."""
+    text = body_text or ''
+    for slot, value in resolved_body.items():
+        text = re.sub(r'\{\{\s*' + re.escape(slot) + r'\s*\}\}', lambda _m, v=value: v, text)
+    return text
+
+
+def _template_body_text(template: dict) -> str:
+    """Extract the BODY component text from a Chatwoot message-template object."""
+    for comp in template.get('components', []):
+        if (comp.get('type') or '').upper() == 'BODY':
+            return comp.get('text') or ''
+    return ''
+
+
 def fetch_chatwoot_config(pb, instance_id: str, handler: str, channel: str) -> dict | None:
     """Assemble Chatwoot connection config from multiple PocketBase collections.
 
@@ -115,6 +133,7 @@ class CampaignCtx:
     template: ChatwootTemplateConfig
     payload: MessengerPayload
     instancia: dict
+    content_template: str = ''  # approved template BODY text ({{n}}), fetched from Chatwoot for display
 
 
 class ChatwootHandler(MessengerHandlerBase):
@@ -241,18 +260,37 @@ class ChatwootHandler(MessengerHandlerBase):
             )
         return resp.ok
 
+    def _fetch_template_body(self, session: requests.Session, config: dict, template_name: str) -> str:
+        """Return the approved WhatsApp template's BODY text (with `{{n}}`) from Chatwoot, so we can
+        render it into the message `content`. Non-fatal: returns '' on any failure (the message still
+        sends, just without visible text in the Chatwoot UI)."""
+        base = f'{config["url"].rstrip("/")}/api/v1/accounts/{config["account_id"]}'
+        try:
+            resp = session.get(f'{base}/inboxes', headers=self._headers(config['api_token_templates']), timeout=10)
+        except requests.RequestException as e:
+            logger.warning('chatwoot.template_fetch_failed', extra={'error': str(e), 'template': template_name})
+            return ''
+        if not resp.ok:
+            return ''
+        for inbox in resp.json().get('payload', []):
+            for tpl in inbox.get('message_templates', []):
+                if tpl.get('name') == template_name:
+                    return _template_body_text(tpl)
+        return ''
+
     @staticmethod
-    def _build_message_body(template, resolved_body: dict, resolved_buttons: list) -> dict:
+    def _build_message_body(template, resolved_body: dict, resolved_buttons: list, content_template: str = '') -> dict:
         processed_params: dict = dict(resolved_body)
         if resolved_buttons:
             processed_params['buttons'] = resolved_buttons
         return {
+            'content': _render_content(content_template, resolved_body),
             'template_params': {
                 'name': template.name,
                 'category': template.category,
                 'language': template.language,
                 'processed_params': processed_params,
-            }
+            },
         }
 
     def _send_template_message(self, session: requests.Session, config: dict, conversation_id: int, message_body: dict) -> bool:
@@ -336,7 +374,7 @@ class ChatwootHandler(MessengerHandlerBase):
 
         self._add_conversation_labels(session, ctx.config, conversation_id, _campaign_labels(ctx.payload))
 
-        message_body = self._build_message_body(ctx.template, resolved_body, resolved_buttons)
+        message_body = self._build_message_body(ctx.template, resolved_body, resolved_buttons, ctx.content_template)
         if not self._send_template_message(session, ctx.config, conversation_id, message_body):
             return False
 
@@ -388,13 +426,14 @@ class ChatwootHandler(MessengerHandlerBase):
             })
             return
 
+        session = requests.Session()
         ctx = CampaignCtx(
             config=config,
             template=template,
             payload=payload,
             instancia=self._fetch_instancia(pb, instance_id),
+            content_template=self._fetch_template_body(session, config, template.name),
         )
-        session = requests.Session()
         # Register the campaign labels as account Labels once (so they're filterable), then the
         # per-recipient fan-out just assigns them to each conversation.
         self._ensure_labels(session, config, _campaign_labels(payload))
