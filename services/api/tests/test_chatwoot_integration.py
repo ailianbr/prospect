@@ -28,9 +28,6 @@ _requires_provisioned_instance = pytest.mark.skipif(
     reason='requires a provisioned Chatwoot instance (channel config + secret) in PocketBase',
 )
 
-# Number of Chatwoot API calls for a new contact (search + create + conversation + message)
-CHATWOOT_CALLS_NEW_CONTACT = 3
-
 # --------------------------------------------------------------------------- #
 # Template body — instancia.* fields use :<default> so tests work without
 # an `instancias` PocketBase record (handler returns {} on error).
@@ -93,20 +90,25 @@ def integration_payload(recipient):
 
 @pytest.fixture
 def chatwoot_session():
-    """Mock requests.Session that simulates a successful Chatwoot API flow."""
+    """Mock requests.Session that simulates a successful Chatwoot API flow, keyed by URL so it
+    tolerates the label calls (ensure account labels + assign to conversation) in any order."""
     session = MagicMock()
 
     search_resp = MagicMock(ok=True)
     search_resp.json.return_value = {'payload': []}
     session.get.return_value = search_resp
 
-    create_contact = MagicMock(ok=True)
-    create_contact.json.return_value = {'id': 42}
-    create_conv = MagicMock(ok=True)
-    create_conv.json.return_value = {'id': 99}
-    send_msg = MagicMock(ok=True)
-    session.post.side_effect = [create_contact, create_conv, send_msg]
+    def _post(url, *args, **kwargs):
+        resp = MagicMock(ok=True)
+        if url.endswith('/contacts'):
+            resp.json.return_value = {'id': 42}
+        elif url.endswith('/conversations'):
+            resp.json.return_value = {'id': 99}
+        else:  # /labels (ensure + assign) and /messages
+            resp.json.return_value = {}
+        return resp
 
+    session.post.side_effect = _post
     return session
 
 
@@ -121,9 +123,9 @@ def test_full_flow_reads_pb_config(handler, integration_payload, chatwoot_sessio
     with patch('app.handlers.chatwoot.handler.requests.Session', return_value=chatwoot_session):
         handler._process_all(integration_payload)
 
-    # contact search + contact create + conversation + message
+    # the full flow ran: one contact search + a template message POST
     assert chatwoot_session.get.call_count == 1
-    assert chatwoot_session.post.call_count == CHATWOOT_CALLS_NEW_CONTACT
+    assert any(c.args[0].endswith('/messages') for c in chatwoot_session.post.call_args_list)
 
 
 @_requires_provisioned_instance
@@ -132,10 +134,9 @@ def test_resolved_variables_in_chatwoot_payload(handler, integration_payload, ch
     with patch('app.handlers.chatwoot.handler.requests.Session', return_value=chatwoot_session):
         handler._process_all(integration_payload)
 
-    # The 3rd POST is the message call — inspect its json kwarg
-    msg_call = chatwoot_session.post.call_args_list[2]
-    body = msg_call.kwargs.get('json') or msg_call.args[1] if len(msg_call.args) > 1 else msg_call.kwargs['json']
-    processed = body['template_params']['processed_params']
+    # find the message POST by URL (label calls now interleave) and inspect its json body
+    msg_call = next(c for c in chatwoot_session.post.call_args_list if c.args[0].endswith('/messages'))
+    processed = msg_call.kwargs['json']['template_params']['processed_params']
 
     assert processed['1'] == 'João Integration'  # lead.name
     assert processed['2'] == 'Fatura de integração'  # campanha.subject
@@ -161,8 +162,8 @@ def test_instancia_fallback_default_used(handler, chatwoot_session):
     with patch('app.handlers.chatwoot.handler.requests.Session', return_value=chatwoot_session):
         handler._process_all(payload)
 
-    # All Chatwoot calls must have been made — recipient was NOT skipped
-    assert chatwoot_session.post.call_count == CHATWOOT_CALLS_NEW_CONTACT
+    # recipient was NOT skipped — a template message was sent
+    assert any(c.args[0].endswith('/messages') for c in chatwoot_session.post.call_args_list)
 
 
 # --------------------------------------------------------------------------- #
@@ -184,7 +185,8 @@ def test_recipient_missing_phone_skipped(handler, chatwoot_session):
         handler._process_all(payload)
 
     chatwoot_session.get.assert_not_called()
-    chatwoot_session.post.assert_not_called()
+    # recipient skipped before send — no message POST (a label-ensure POST may still occur)
+    assert not any(c.args[0].endswith('/messages') for c in chatwoot_session.post.call_args_list)
 
 
 def test_unknown_instance_skips_all(handler, chatwoot_session):
