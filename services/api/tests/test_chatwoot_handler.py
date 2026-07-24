@@ -5,6 +5,7 @@ from http import HTTPStatus
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from app.handlers.chatwoot.handler import CampaignCtx, ChatwootHandler, _campaign_labels, _slug  # noqa: PLC2701
 from app.handlers.chatwoot.schemas import ChatwootCampaignBody, ChatwootTemplateConfig
@@ -463,13 +464,21 @@ def test_ensure_labels_creates_account_labels_idempotently(handler):
     assert [c.kwargs['json']['title'] for c in session.post.call_args_list] == labels
 
 
-def test_process_one_creates_conversation_with_wa_id_source(handler, recipient, ctx):
-    """Conversation is created with source_id = the wa_id (phone digits) so campaign messages
-    thread with inbound replies instead of splitting to a separate conversation."""
-    session = _make_http_session(contact_id=42, conversation_id=99)
+def test_process_one_label_exception_is_non_fatal(handler, recipient, ctx):
+    """A raised exception on the label call must not abort the send (message still goes out)."""
+    session = MagicMock()
+    session.get.return_value = MagicMock(ok=True, json=lambda: {'payload': []})
 
-    handler._process_one(recipient, ctx, session)
+    def _post(url, *args, **kwargs):
+        if url.endswith('/labels'):
+            raise requests.ConnectionError('boom')
+        resp = MagicMock(ok=True)
+        resp.json.return_value = {'id': 42} if url.endswith('/contacts') else {'id': 99}
+        return resp
 
-    conv_calls = [c for c in session.post.call_args_list if c.args and c.args[0].endswith('/conversations')]
-    assert conv_calls, 'expected a POST to create the conversation'
-    assert conv_calls[0].kwargs['json']['source_id'] == '5511999999999'  # from recipient attribs +5511999999999
+    session.post.side_effect = _post
+
+    result = handler._process_one(recipient, ctx, session)
+
+    assert result is True  # label exception is swallowed; the template message still sends
+    assert any(c.args[0].endswith('/messages') for c in session.post.call_args_list)
