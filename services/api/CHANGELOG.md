@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.0](https://github.com/ailianbr/prospect/compare/monk-api-v0.9.1...monk-api-v0.10.0) (2026-07-24)
+
+
+### Features
+
+* **api:** add opt-in `overwrite` flag to subscriber import ([d526bea](https://github.com/ailianbr/prospect/commit/d526bea8e3dbd15b66fb83643a6cb734a7289a95))
+* **api:** add opt-in `overwrite` flag to subscriber import ([88c01c9](https://github.com/ailianbr/prospect/commit/88c01c90d92e46977aeb0ec29f780462ed5a3810))
+* **api:** tag Chatwoot conversations with campaign name + tags for filtering ([74b9f5e](https://github.com/ailianbr/prospect/commit/74b9f5e5ecde27c6239ac9879ec0668a03ffa62f))
+* Chatwoot campaign labels + WhatsApp reply threading ([06800d6](https://github.com/ailianbr/prospect/commit/06800d6971d5363795eeb674a021b60c6112ad5f))
+
+
+### Bug Fixes
+
+* **api:** thread WhatsApp replies by creating conversations with the wa_id source_id ([71e9788](https://github.com/ailianbr/prospect/commit/71e9788178d835abbeb3003cf4285a71581879f7))
+
 ## [0.9.1](https://github.com/ailianbr/prospect/compare/monk-api-v0.9.0...monk-api-v0.9.1) (2026-07-23)
 
 
