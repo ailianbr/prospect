@@ -123,8 +123,8 @@ def test_full_flow_reads_pb_config(handler, integration_payload, chatwoot_sessio
     with patch('app.handlers.chatwoot.handler.requests.Session', return_value=chatwoot_session):
         handler._process_all(integration_payload)
 
-    # the full flow ran: one contact search + a template message POST
-    assert chatwoot_session.get.call_count == 1
+    # the full flow ran: a contact search + a template message POST (a template-fetch GET also happens)
+    assert any(c.args[0].endswith('/contacts/search') for c in chatwoot_session.get.call_args_list)
     assert any(c.args[0].endswith('/messages') for c in chatwoot_session.post.call_args_list)
 
 

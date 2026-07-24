@@ -7,7 +7,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from app.handlers.chatwoot.handler import CampaignCtx, ChatwootHandler, _campaign_labels, _slug  # noqa: PLC2701
+from app.handlers.chatwoot.handler import (
+    CampaignCtx,
+    ChatwootHandler,
+    _campaign_labels,  # noqa: PLC2701
+    _render_content,  # noqa: PLC2701
+    _slug,  # noqa: PLC2701
+)
 from app.handlers.chatwoot.schemas import ChatwootCampaignBody, ChatwootTemplateConfig
 from app.handlers.resolver import DefaultVariableResolver
 from app.schemas import MessengerCampaignMeta, MessengerPayload, MessengerRecipient
@@ -482,3 +488,50 @@ def test_process_one_label_exception_is_non_fatal(handler, recipient, ctx):
 
     assert result is True  # label exception is swallowed; the template message still sends
     assert any(c.args[0].endswith('/messages') for c in session.post.call_args_list)
+
+
+# --------------------------------------------------------------------------- #
+# Message content rendering (so the message text shows in the Chatwoot UI)
+# --------------------------------------------------------------------------- #
+
+
+def test_render_content_substitutes_placeholders():
+    body = 'Oi, {{1}}! Sua fatura de {{2}} venceu.'
+    assert _render_content(body, {'1': 'João', '2': 'Novembro'}) == 'Oi, João! Sua fatura de Novembro venceu.'
+    assert _render_content('{{ 1 }}', {'1': 'x'}) == 'x'  # tolerates whitespace in the placeholder
+    assert _render_content('preço: {{1}}', {'1': 'R$ 10\\3'}) == 'preço: R$ 10\\3'  # value not regex-interpreted
+    assert not _render_content('', {'1': 'x'})
+    assert _render_content('no vars here', {}) == 'no vars here'
+
+
+def test_build_message_body_renders_content(template):
+    body = ChatwootHandler._build_message_body(template, {'1': 'João', '2': 'Empresa'}, [], 'Oi, {{1}} da {{2}}.')
+    assert body['content'] == 'Oi, João da Empresa.'
+    assert body['template_params']['name'] == template.name
+
+
+def test_fetch_template_body_returns_body_text(handler):
+    session = MagicMock()
+    session.get.return_value = MagicMock(
+        ok=True,
+        json=lambda: {
+            'payload': [
+                {
+                    'message_templates': [
+                        {'name': 'other', 'components': [{'type': 'BODY', 'text': 'nope'}]},
+                        {
+                            'name': 'cobranca_v2',
+                            'components': [{'type': 'HEADER', 'text': 'h'}, {'type': 'BODY', 'text': 'Oi, {{1}}!'}],
+                        },
+                    ]
+                }
+            ]
+        },
+    )
+    assert handler._fetch_template_body(session, CHATWOOT_CONFIG, 'cobranca_v2') == 'Oi, {{1}}!'
+
+
+def test_fetch_template_body_missing_returns_empty(handler):
+    session = MagicMock()
+    session.get.return_value = MagicMock(ok=True, json=lambda: {'payload': []})
+    assert not handler._fetch_template_body(session, CHATWOOT_CONFIG, 'nope')
